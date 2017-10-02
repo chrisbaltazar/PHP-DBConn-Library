@@ -5,12 +5,12 @@ if (! class_exists ( "DBConn" )) {
 
 
 class DBConn{
-    var $connection; //Arreglo de conexiones que soportara la clase para su disposicion
-    var $cn; // Variable contenedora de la conexion activa
-    var $rows; // Almacena el numero de filas afectadas en cada operacion
-    var $active = "MYAPP"; // Declara cual sera la conexion x default cuando no se especifique lo contrario
-    var $debug = true; // Modo de tratado de excepciones o errores
-    var $protocol = "MYSQL"; // Protocolo de conexion x default
+    private $connection; //Arreglo de conexiones que soportara la clase para su disposicion
+    private $cn; // Variable contenedora de la conexion activa
+    private $rows; // Almacena el numero de filas afectadas en cada operacion
+    private $active = "MYAPP"; // Declara cual sera la conexion x default cuando no se especifique lo contrario
+    private $debug = true; // Modo de tratado de excepciones o errores
+    private $protocol = "MYSQL"; // Protocolo de conexion x default
     
     //Constructor, recibe el nombre de la conexion que se desea o en caso contrario adopta la DEFAULT como se declaro antes
     function __construct($conn = null, $pro = null){
