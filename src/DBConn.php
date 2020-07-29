@@ -1,11 +1,15 @@
 <?php
 
-require_once( 'HttpException.php' );
+namespace DBConn;
 
-if ( ! class_exists( "DBConn" ) ) {
-//Clase de Acceso a datos unificada...
+//if ( ! class_exists( "DBConn" ) ) {
 
+	/**
+	 * Class DBConn
+	 * Easy and fast DB queries for everyone
+	 */
 	class DBConn {
+
 		private $connection;
 		private $cn;
 		private $id;
@@ -33,11 +37,15 @@ if ( ! class_exists( "DBConn" ) ) {
 
 		/**
 		 *
-		 * @param type $conn - specific connection to use
-		 * @param type $session - user session variable name
-		 * @param type $pro - specific engine to use (MYSQL, SQLDRIVER)
 		 */
-		public function __construct( $conn = null, $session = null, $pro = null ) {
+		public function __construct() {
+			$dotenv = Dotenv\Dotenv::createImmutable( __DIR__ );
+			$dotenv->load();
+
+			var_dump($_ENV);
+			die;
+
+
 			if ( $conn ) {
 				$this->active = $conn;
 			}
@@ -1049,6 +1057,6 @@ if ( ! class_exists( "DBConn" ) ) {
 
 	}
 
-}
+//}
 
 ?>
