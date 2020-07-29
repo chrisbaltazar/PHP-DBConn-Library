@@ -79,6 +79,7 @@ class DBConn {
 
 	/**
 	 * get the current time zone according with the summer schedule
+	 *
 	 * @return string
 	 */
 	private function getTimezone() {
@@ -104,11 +105,11 @@ class DBConn {
 	/**
 	 * set the session var name for current user
 	 *
-	 * @param $session
+	 * @param string $session
 	 *
 	 * @return $this
 	 */
-	public function setSession( $session ) {
+	public function setSession( string $session ) {
 		$this->_session = $session;
 
 		return $this;
@@ -117,7 +118,7 @@ class DBConn {
 	/**
 	 * set the fields for stamps used for updates automatically on any table
 	 *
-	 * @param $stamps
+	 * @param array $stamps
 	 *
 	 * @return $this
 	 */
@@ -130,84 +131,47 @@ class DBConn {
 	/**
 	 * set the fields used as flags for updates instead of deletes on any table
 	 *
-	 * @param type $flags
+	 * @param array $flags
 	 *
 	 * @return $this
 	 */
-	public function setFlags( $flags ) {
+	public function setFlags( array $flags ) {
 		$this->flags = $flags;
 
 		return $this;
 	}
 
 	/**
-	 * set the current database engine to use
-	 *
-	 * @param type $pro
-	 *
-	 * @return $this
-	 */
-	public function setProtocol( $pro ) {
-		$this->protocol = $pro;
-
-		return $this;
-	}
-
-	/**
 	 * get the number of rows affected by the last operation
-	 * @return type
+	 * @return int
 	 */
 	public function affectedRows() {
-		return $this->rows;
+		return $this->rows ?? 0;
 	}
 
-	/**
-	 * get the current credentials used in this connection
-	 * @return type
-	 */
-	public function getCredentials() {
-		return $this->connection[ $this->active ];
-	}
 
 	/**
 	 * get the auto inserted ID on the last query
-	 * @return type
+	 * @return int
 	 */
 	public function getInserted() {
-		return $this->id;
+		return $this->id ?? 0;
 	}
 
 	/**
 	 * opens the database connection and get the active link
-	 * @return type
+	 * @return false|\mysqli|resource
 	 */
-	public function Connect() {
+	public function connect() {
 		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					$this->cn = mysqli_connect( $this->connection[ $this->active ]['HOST'],
-						$this->connection[ $this->active ]['USER'],
-						$this->connection[ $this->active ]['PWD'] )
-					or $this->Error( "CONNECTION ERROR $this->active" );
-					$db = mysqli_select_db( $this->cn, $this->connection[ $this->active ]['DB'] )
-					or $this->Error( "CONNECTION ERROR $this->active" );
-
-					break;
-				case "SQLDRIVER":
-					$this->cn = sqlsrv_connect( $this->connection[ $this->active ]['HOST'] . ( $this->connection[ $this->active ]['PORT'] ? "," . $this->connection[ $this->active ]['PORT'] : "" ),
-						array(
-							"Database" => $this->connection[ $this->active ]['DB'],
-							"UID"      => $this->connection[ $this->active ]['USER'],
-							"PWD"      => $this->connection[ $this->active ]['PWD']
-						)
-					);
-					if ( ! $this->cn ) {
-						$this->Error( "CONNECTION ERROR $this->active" );
-					}
-					break;
-			}
-		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->cn = mysqli_connect(
+				$this->_host,
+				$this->_user,
+				$this->_password,
+				$this->_name
+			);
+		} catch ( \Exception $ex ) {
+			$this->error( $ex->getMessage() );
 		}
 
 		return $this->cn;
@@ -227,7 +191,7 @@ class DBConn {
 					break;
 			}
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 	}
@@ -276,7 +240,7 @@ class DBConn {
 					break;
 			}
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 		return $this->getWiths( $result );
@@ -327,7 +291,7 @@ class DBConn {
 					break;
 			}
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 		return $obj;
@@ -365,7 +329,7 @@ class DBConn {
 					break;
 			}
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 		return $one;
@@ -393,7 +357,7 @@ class DBConn {
 					break;
 			}
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 		return $id;
@@ -423,7 +387,7 @@ class DBConn {
 					break;
 			}
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 		return $res[0];
@@ -510,12 +474,12 @@ class DBConn {
 			} elseif ( array_filter( $where ) ) {
 				$sql .= $this->build( $where, " and " );
 			} else {
-				$this->Error( "Where format not valid" );
+				$this->error( "Where format not valid" );
 			}
 
 			return $this->execute( $sql );
 		} else {
-			$this->Error( "No Where Statement declared" );
+			$this->error( "No Where Statement declared" );
 		}
 	}
 
@@ -581,7 +545,7 @@ class DBConn {
 			);
 
 		} else {
-			$this->Error( "Not main source selected yet" );
+			$this->error( "Not main source selected yet" );
 		}
 
 		return $this;
@@ -651,7 +615,7 @@ class DBConn {
 				$this->rawWhere[ $i ][] = $raw;
 			}
 		} else {
-			$this->Error( "RAW Statement must be an array" );
+			$this->error( "RAW Statement must be an array" );
 		}
 
 		return $this;
@@ -719,7 +683,7 @@ class DBConn {
 
 			return $this;
 		} else {
-			$this->Error( "Ignore statement must be an array" );
+			$this->error( "Ignore statement must be an array" );
 		}
 	}
 
@@ -749,23 +713,23 @@ class DBConn {
 	 */
 	private function query( $sql ) {
 		$this->sql = $sql;
-		$this->Connect();
+		$this->connect();
 		try {
 			switch ( $this->protocol ) {
 				case "MYSQL":
 					mysqli_query( $this->cn, "SET NAMES 'utf8'" );
 					mysqli_query( $this->cn, "SET time_zone = '" . $this->getTimezone() . "'" );
-					$result = mysqli_query( $this->cn, $sql ) or $this->Error();
+					$result = mysqli_query( $this->cn, $sql ) or $this->error();
 					$this->rows = mysqli_affected_rows( $this->cn );
 					$this->id   = mysqli_insert_id( $this->cn );
 					break;
 				case "SQLDRIVER":
-					$result = sqlsrv_query( $this->cn, $sql ) or $this->Error();
+					$result = sqlsrv_query( $this->cn, $sql ) or $this->error();
 					$this->rows = sqlsrv_rows_affected( $result );
 					break;
 			}
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 		return $result;
@@ -780,7 +744,7 @@ class DBConn {
 				"pluck"   => $pluck
 			);
 		} else {
-			$this->Error( "With statement needs a main source table selected" );
+			$this->error( "With statement needs a main source table selected" );
 		}
 
 		return $this;
@@ -803,7 +767,7 @@ class DBConn {
 			}
 			$meta->key = $this->key;
 		} catch ( Exception $ex ) {
-			$this->Error( $ex->getMessage() );
+			$this->error( $ex->getMessage() );
 		}
 
 		return $meta;
@@ -867,7 +831,7 @@ class DBConn {
 				}
 				$sql .= implode( ", ", $array );
 			} else {
-				$this->Error( "Select statement doesn't match with tables count" );
+				$this->error( "Select statement doesn't match with tables count" );
 			}
 		} else {
 			$sql .= " * ";
@@ -885,7 +849,7 @@ class DBConn {
 				            . $this->getRelation( $i );
 			}
 		} else {
-			$this->Error( "You have no tables registered yet" );
+			$this->error( "You have no tables registered yet" );
 		}
 
 		return implode( " ", $source );
@@ -914,7 +878,7 @@ class DBConn {
 					}
 				}
 			} else {
-				$this->Error( "Order statement doesn't match with tables count" );
+				$this->error( "Order statement doesn't match with tables count" );
 			}
 
 			return " ORDER BY " . implode( ", ", $order );
@@ -930,7 +894,7 @@ class DBConn {
 					}
 				}
 			} else {
-				$this->Error( "Group statement doesn't match with tables count" );
+				$this->error( "Group statement doesn't match with tables count" );
 			}
 
 			return " GROUP BY " . implode( ", ", $array );
@@ -971,7 +935,7 @@ class DBConn {
 					}
 				}
 			} else {
-				$this->Error( "Where statement doesn't match with tables count" );
+				$this->error( "Where statement doesn't match with tables count" );
 			}
 		}
 		if ( $this->rawWhere ) {
@@ -1020,7 +984,7 @@ class DBConn {
 					}
 				}
 			} catch ( Exception $ex ) {
-				$this->Error( $ex->getMessage() );
+				$this->error( $ex->getMessage() );
 			}
 		}
 
@@ -1036,22 +1000,21 @@ class DBConn {
 		return $target;
 	}
 
-
-	private function Error( $msg = "" ) {
-		if ( $this->debug ) {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					$error = ( mysqli_error( $this->cn ) ? mysqli_error( $this->cn ) : $msg ) . " | " . $this->sql;
-					break;
-				case "SQLDRIVER":
-					$err   = sqlsrv_errors();
-					$error = ( $err[0] ? $err[0]['message'] : $msg ) . " | " . $this->sql;
-					break;
-			}
-			throw new HttpException( $error );
-		} else {
-			throw new HttpException();
+	/**
+	 * @param string $msg
+	 *
+	 * @throws \Exception
+	 */
+	private function error( string $msg = '' ) {
+		if ( $this->_debug ) {
+			$error = [
+				mysqli_error( $this->cn ),
+				$msg,
+				$this->sql
+			];
 		}
+
+		throw new \Exception( join( ' | ', $error ?? [] ) );
 	}
 
 	/**
