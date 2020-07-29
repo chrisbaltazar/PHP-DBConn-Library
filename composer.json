@@ -10,8 +10,7 @@
     }
   ],
   "require": {
-    "php": ">=7.0",
-    "vlucas/phpdotenv": "^5.1"
+    "php": ">=7.0"
   },
   "autoload": {
     "psr-4": {
