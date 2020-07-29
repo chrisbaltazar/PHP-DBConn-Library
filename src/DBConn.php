@@ -10,6 +10,11 @@ use http\Exception\UnexpectedValueException;
  */
 class DBConn {
 
+	const RETURN_FORMAT_ARRAY = 'ARRAY';
+	const JOIN_TYPE_INNER = 'INNER';
+	const JOIN_TYPE_LEFT = 'LEFT';
+	const JOIN_TYPE_RIGHT = 'RIGHT';
+
 	private $_host;
 	private $_user;
 	private $_password;
@@ -18,6 +23,7 @@ class DBConn {
 	private $_debug;
 	private $_timezone;
 	private $_summertime;
+	private $_charset;
 
 	private $cn;
 	private $id;
@@ -50,6 +56,7 @@ class DBConn {
 		$this->_session    = defined( 'SESSION_ID' ) ? SESSION_ID : $_ENV['SESSION_ID'] ?? null;
 		$this->_timezone   = defined( 'TIME_ZONE' ) ? TIME_ZONE : $_ENV['TIME_ZONE'] ?? 'GMT+0';
 		$this->_summertime = defined( 'SUMMER_TIME' ) ? SUMMER_TIME : $_ENV['SUMMER_TIME'] ?? true;
+		$this->_charset    = defined( 'CHARSET' ) ? CHARSET : $_ENV['CHARSET'] ?? 'utf8';
 
 		$this->init();
 	}
@@ -161,6 +168,7 @@ class DBConn {
 	/**
 	 * opens the database connection and get the active link
 	 * @return false|\mysqli|resource
+	 * @throws \Exception
 	 */
 	public function connect() {
 		try {
@@ -179,35 +187,30 @@ class DBConn {
 
 	/**
 	 * Close the active connection
+	 * @throws \Exception
 	 */
-	public function CloseDB() {
+	public function close() {
 		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					mysqli_close( $this->cn );
-					break;
-				case "SQLDRIVER":
-					sqlsrv_close( $thi->cn );
-					break;
-			}
-		} catch ( Exception $ex ) {
+			mysqli_close( $this->cn );
+		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
-
 	}
 
 	/**
 	 * get the results from a query and return them as a list in ARRAY or OBJECT format
 	 *
-	 * @param type $sql
-	 * @param type $format
+	 * @param string $sql
+	 * @param string $format
 	 *
 	 * @return type
+	 * @throws \Exception
 	 */
-	public function getArray( $sql = "", $format = "ARRAY" ) {
+	public function getArray( string $sql = '', string $format = self::RETURN_FORMAT_ARRAY ) {
 		if ( ! $sql ) {
 			$sql = $this->getSQL();
 		}
+
 		$ds     = $this->query( $sql );
 		$result = array();
 		try {
@@ -249,11 +252,12 @@ class DBConn {
 	/**
 	 * get the results from a query in JSON list format
 	 *
-	 * @param type $sql
+	 * @param string $sql
 	 *
-	 * @return type
+	 * @return string
+	 * @throws \Exception
 	 */
-	public function getJSON( $sql = "" ) {
+	public function getJSON( string $sql = '' ) {
 		if ( ! $sql ) {
 			$sql = $this->getSQL();
 		}
@@ -264,103 +268,51 @@ class DBConn {
 	/**
 	 * get only one row from a query in OBJECT format
 	 *
-	 * @param type $sql
+	 * @param string $sql
 	 *
-	 * @return type
+	 * @return object|null
+	 * @throws \Exception
 	 */
-	public function getObject( $sql = "" ) {
+	public function getObject( string $sql = '' ) {
 		if ( ! $sql ) {
 			$sql = $this->getSQL();
 		}
+
 		$ds = $this->query( $sql );
 		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					if ( mysqli_num_rows( $ds ) > 0 ) {
-						$obj = mysqli_fetch_object( $ds );
-					} else {
-						$obj = null;
-					}
-					break;
-				case "SQLDRIVER":
-					if ( sqlsrv_has_rows( $ds ) ) {
-						$obj = sqlsrv_fetch_object( $ds );
-					} else {
-						$obj = null;
-					}
-					break;
+			if ( mysqli_num_rows( $ds ) ) {
+				return mysqli_fetch_object( $ds );
 			}
-		} catch ( Exception $ex ) {
+
+			return null;
+		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
-
-		return $obj;
 	}
 
 	/**
 	 * get only the first value from a query
 	 *
-	 * @param type $sql
+	 * @param string $sql
 	 *
-	 * @return type
+	 * @return mixed|null
+	 * @throws \Exception
 	 */
-	public function getOne( $sql = "" ) {
+	public function getOne( string $sql = '' ) {
 		if ( ! $sql ) {
 			$sql = $this->getSQL();
 		}
+
 		$ds = $this->query( $sql );
 		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					if ( mysqli_num_rows( $ds ) > 0 ) {
-						$data = mysqli_fetch_row( $ds );
-						$one  = htmlspecialchars( $data[0] );
-					} else {
-						$one = null;
-					}
-					break;
-				case "SQLDRIVER":
-					if ( sqlsrv_has_rows( $ds ) ) {
-						$data = sqlsrv_fetch_array( $ds );
-						$one  = $data[0];
-					} else {
-						$one = null;
-					}
-					break;
+			if ( mysqli_num_rows( $ds ) ) {
+				return current( mysqli_fetch_row( $ds ) );
 			}
-		} catch ( Exception $ex ) {
+
+			return null;
+		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
-
-		return $one;
-	}
-
-	/**
-	 * get the next available ID from a table
-	 *
-	 * @param type $field
-	 * @param type $table
-	 * @param type $condition
-	 *
-	 * @return type
-	 */
-	public function getID( $field, $table, $condition = "" ) {
-		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					$sql = "select IFNULL(max(" . $field . "), 0) + 1 from " . $table . ( $condition == "" ? "" : " where " . $condition );
-					$id  = $this->getOne( $sql );
-					break;
-				case "SQLDRIVER":
-					$sql = "select ISNULL(max(" . $field . "), 0) + 1 from " . $table . ( $condition == "" ? "" : " where " . $condition );
-					$id  = $this->getOne( $sql );
-					break;
-			}
-		} catch ( Exception $ex ) {
-			$this->error( $ex->getMessage() );
-		}
-
-		return $id;
 	}
 
 	/**
@@ -396,15 +348,16 @@ class DBConn {
 	/**
 	 * executes a query, only for insert, update, delete operations
 	 *
-	 * @param type $sql
+	 * @param string $sql
 	 *
-	 * @return type
+	 * @return int
+	 * @throws \Exception
 	 */
-	public function execute( $sql ) {
+	public function execute( string $sql ) {
 		$this->query( $sql );
-		$this->CloseDB();
+		$this->close();
 
-		return $this->rows;
+		return $this->affectedRows();
 	}
 
 	/**
@@ -486,16 +439,12 @@ class DBConn {
 	/**
 	 * set the fields to be included on the select part for the query builder
 	 *
-	 * @param type $params
+	 * @param array $args
 	 *
 	 * @return $this
 	 */
-	public function select( $params ) {
-		if ( is_array( $params ) ) {
-			$this->select = $params;
-		} else {
-			$this->select = array( $params );
-		}
+	public function select( ...$args ) {
+		$this->select = $args;
 
 		return $this;
 	}
@@ -503,14 +452,13 @@ class DBConn {
 	/**
 	 * set the main table to be the source for the query builder
 	 *
-	 * @param type $source
+	 * @param string $source
 	 *
 	 * @return $this
 	 */
-	public function from( $source ) {
-		$this->tables    = array();
-		$this->with      = array();
-		$this->tables[0] = array( "name" => $source );
+	public function from( string $source ) {
+		$this->tables = [ 'name' => $source ];
+		$this->with   = [];
 
 		return $this;
 	}
@@ -518,35 +466,52 @@ class DBConn {
 	/**
 	 * set one table to make a join with another in the tables array, pointing out the
 	 * name of this table, the target table to join with an index reference,
-	 * the field name for relationship and the join type (LEFT, RIGHT...)
 	 *
-	 * @param type $params
+	 * @param string $tableName
+	 * @param int $targetTable
+	 * @param string $join
 	 *
 	 * @return $this
+	 * @throws \Exception
 	 */
-	public function join( $params ) {
-		if ( $this->tables[0] ) {
-			if ( is_array( $params ) ) {
-				$name     = $params[0];
-				$target   = $params[1] ? $params[1] : 0;
-				$relation = $params[2] ? $params[2] : $this->getTarget( $target ) . "_id";
-				$join     = $params[3] ? $params[3] : "";
-			} else {
-				$name     = $params;
-				$target   = 0;
-				$relation = $this->getTarget( 0 ) . "_id";
-				$join     = "";
-			}
-			$this->tables[] = array(
-				"name"     => $name,
-				"target"   => $target,
-				"relation" => $relation,
-				"join"     => $join
-			);
-
-		} else {
-			$this->error( "Not main source selected yet" );
+	public function join( string $tableName, int $targetTable = 0, string $join = self::JOIN_TYPE_INNER ) {
+		if ( ! $this->tables[0] ) {
+			$this->error( "No main source selected yet" );
 		}
+
+		if ( ! $this->tables[ $targetTable ] ) {
+			$this->error( 'Target table out of range' );
+		}
+
+		$this->tables[] = [
+			'name'   => $tableName,
+			'target' => $targetTable,
+			'join'   => $join
+		];
+
+		return $this;
+	}
+
+	public function on( string $tableField = 'id', string $foreignFieldOrOperator = '', string $justForeignField = '' ) {
+		if ( ! count( $this->tables ) > 1 ) {
+			$this->error( 'No join tables declared yet' );
+		}
+
+		$tableJoin = end( $this->tables );
+		if ( isset( $tableJoin['relation'] ) ) {
+			$this->error( 'ON method MUST be called right after making a JOIN' );
+		}
+
+		$targetTable = $this->getNormalizedTarget( $tableJoin['target'] );
+		if ( empty( $foreignFieldOrOperator ) ) {
+			$relaion = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, '=', $this->tables[ $tableJoin['target'] ]['name'], 'id' );
+		} else {
+			$operators = [ '>=', '<=', '>', '<', '=', 'IS NULL' ];
+			if ( in_array( $foreignFieldOrOperator, $operators ) ) {
+
+			}
+		}
+
 
 		return $this;
 	}
@@ -689,7 +654,7 @@ class DBConn {
 
 	/**
 	 * Build and return all the query saved in the instance
-	 * @return type
+	 * @return string
 	 */
 	public function getSQL() {
 		$sql = "";
@@ -707,32 +672,25 @@ class DBConn {
 	/**
 	 * receive a sql query ready to execute on the database and return the results
 	 *
-	 * @param type $sql
+	 * @param string $sql
 	 *
-	 * @return type
+	 * @return bool|\mysqli_result
+	 * @throws \Exception
 	 */
-	private function query( $sql ) {
+	private function query( string $sql ) {
 		$this->sql = $sql;
 		$this->connect();
 		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					mysqli_query( $this->cn, "SET NAMES 'utf8'" );
-					mysqli_query( $this->cn, "SET time_zone = '" . $this->getTimezone() . "'" );
-					$result = mysqli_query( $this->cn, $sql ) or $this->error();
-					$this->rows = mysqli_affected_rows( $this->cn );
-					$this->id   = mysqli_insert_id( $this->cn );
-					break;
-				case "SQLDRIVER":
-					$result = sqlsrv_query( $this->cn, $sql ) or $this->error();
-					$this->rows = sqlsrv_rows_affected( $result );
-					break;
-			}
-		} catch ( Exception $ex ) {
+			mysqli_query( $this->cn, "SET NAMES '" . $this->_charset . "'" );
+			mysqli_query( $this->cn, "SET time_zone = '" . $this->getTimezone() . "'" );
+			$result     = mysqli_query( $this->cn, $sql );
+			$this->rows = mysqli_affected_rows( $this->cn );
+			$this->id   = mysqli_insert_id( $this->cn );
+		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
 
-		return $result;
+		return $result ?? false;
 	}
 
 	private function addWith( $type, $table, $foreign, $alias, $pluck ) {
@@ -991,9 +949,14 @@ class DBConn {
 		return $data;
 	}
 
-	private function getTarget( $index ) {
+	/**
+	 * @param int $index
+	 *
+	 * @return false|string
+	 */
+	private function getNormalizedTarget( int $index ) {
 		$target = $this->tables[ $index ]['name'];
-		if ( substr( $target, - 1 ) == "s" ) {
+		if ( substr( $target, - 1 ) == 's' ) {
 			return substr( $target, 0, strlen( $target ) - 1 );
 		}
 
@@ -1014,7 +977,7 @@ class DBConn {
 			];
 		}
 
-		throw new \Exception( join( ' | ', $error ?? [] ) );
+		throw new \Exception( join( ' | ', array_filter( $error ?? [] ) ) );
 	}
 
 	/**
