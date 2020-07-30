@@ -697,18 +697,15 @@ class DBConn {
 		$metaTable = [];
 		$metaKey   = [];
 		try {
-			$columns      = mysqli_fetch_all( $this->query( "SHOW COLUMNS FROM $table" ), MYSQLI_ASSOC );
-			$this->fields = $metaTable['fields'] = array_column( $columns, 'field' );
-
-			$key = array_filter( $columns, function ( $item ) {
-				return ( $item['Key'] == 'PRI' );
-			} );
-
-			if ( $key ) {
-				$metaKey['name'] = $key[0]['Field'];
-				$metaKey['auto'] = substr_count( $key[0]['Extra'], "auto_increment" ) > 0;
+			$tableRows = mysqli_fetch_all( $this->query( "SHOW COLUMNS FROM $table" ), MYSQLI_ASSOC );
+			foreach ( $tableRows as $row ) {
+				$metaTable['fields'][ $row['Field'] ] = $row['Type'];
+				if ( $row['Key'] == 'PRI' && ! $metaKey ) {
+					$metaKey['name'] = $row['Field'];
+					$metaKey['auto'] = substr_count( $row['Extra'], "auto_increment" ) > 0;
+				}
 			}
-			$this->key = $metaTable['key'] = (object) $metaKey;
+			$metaTable['key'] = (object) $metaKey;
 		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
@@ -869,7 +866,7 @@ class DBConn {
 
 				$metaTable = $this->getTable( $table['name'] );
 				$flags     = [];
-				foreach ( array_intersect_key( $this->activeFlags, array_flip( $metaTable->fields ) ) as $flag ) {
+				foreach ( array_intersect_key( $this->activeFlags, $metaTable->fields ) as $flag ) {
 					$flags[] = $flag . ' ' . $this->activeFlags[ $flag ]['condition'];
 				}
 
@@ -888,9 +885,9 @@ class DBConn {
 			foreach ( $this->where as $i => $where ) {
 				foreach ( explode( ",", $where ) as $w ) {
 					foreach ( self::OPERATORS as $ope ) {
-						if ( substr_count( $w, $ope ) ) {
+						if ( substr_count( strtoupper( $w ), $ope ) ) {
 							$condition = explode( $ope, $w );
-							$stack[]   = trim( sprintf( "%s.%s %s %s", $this->tables[ $i ]['name'], trim( $condition[0] ), $ope, trim( $condition[1] ) ) );
+							$stack[]   = $this->setCondition( $this->tables[ $i ]['name'], $condition[0], $ope, $condition[1] ?? '' );
 						}
 					}
 				}
@@ -1038,6 +1035,33 @@ class DBConn {
 		$this->activeFlags[ $fieldName ] = [ 'condition' => $condition, 'fill' => $fillValue ];
 
 		return $this;
+	}
+
+	/**
+	 * @param string $table
+	 * @param string $field
+	 * @param string $operator
+	 * @param string $value
+	 *
+	 * @return string
+	 * @throws \Exception
+	 */
+	private function setCondition( string $table, string $field, string $operator, string $value = '' ) {
+		if ( empty( $value ) ) {
+			return sprintf( "%s.%s %s", $table, trim( $field ), $operator );
+		}
+
+		$metaTable      = $this->getTable( $table );
+		$fieldType      = strtolower( $metaTable->fields[ $field ] );
+		$quotesRequired = [ 'char', 'text', 'blob', 'date', 'time' ];
+		// Evaluate if the value needs to use quotes
+		if ( array_filter( $quotesRequired, function ( $item ) use ( $fieldType ) {
+			return substr_count( $fieldType, $item ) > 0;
+		} ) ) {
+			$value = "'$value'";
+		}
+
+		return sprintf( "%s.%s %s %s", $table, trim( $field ), $operator, $value );
 	}
 
 }
