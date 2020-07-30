@@ -626,8 +626,8 @@ class DBConn {
 		$sql .= $this->getSelect();
 		$sql .= $this->getSource();
 		$sql .= $this->getWhere();
-		$sql .= $this->getGroup();
-		$sql .= $this->getOrder();
+//		$sql .= $this->getGroup();
+//		$sql .= $this->getOrder();
 
 		$this->init();
 
@@ -824,38 +824,55 @@ class DBConn {
 		return $relation;
 	}
 
+	/**
+	 * @return string
+	 * @throws \Exception
+	 */
 	private function getOrder() {
 		if ( $this->order ) {
 			if ( count( $this->order ) <= count( $this->tables ) ) {
-				foreach ( $this->order as $i => $ord ) {
-					foreach ( explode( ",", $ord ) as $o ) {
-						$order[] = $this->tables[ $i ]['name'] . "." . trim( $o );
-					}
+				$this->error( 'Order statement doesn\'t match with tables count' );
+
+			}
+			$stack = [];
+			foreach ( $this->order as $i => $order ) {
+				foreach ( explode( ',', $order ) as $o ) {
+					$stack[] = $this->tables[ $i ]['name'] . '.' . trim( $o );
 				}
-			} else {
-				$this->error( "Order statement doesn't match with tables count" );
 			}
 
-			return " ORDER BY " . implode( ", ", $order );
+			return ' ORDER BY ' . join( ', ', $stack );
 		}
+
+		return '';
 	}
 
+	/**
+	 * @return string
+	 * @throws \Exception
+	 */
 	private function getGroup() {
 		if ( $this->group ) {
-			if ( count( $this->group ) <= count( $this->tables ) ) {
-				foreach ( $this->group as $i => $group ) {
-					foreach ( explode( ",", $group ) as $g ) {
-						$array[] = $this->tables[ $i ]['name'] . "." . trim( $g );
-					}
+			if ( count( $this->group ) > count( $this->tables ) ) {
+				$this->error( 'Group statement doesn\'t match with tables count' );
+			}
+			$stack = [];
+			foreach ( $this->group as $i => $group ) {
+				foreach ( explode( ',', $group ) as $g ) {
+					$stack[] = $this->tables[ $i ]['name'] . '.' . trim( $g );
 				}
-			} else {
-				$this->error( "Group statement doesn't match with tables count" );
 			}
 
-			return " GROUP BY " . implode( ", ", $array );
+			return ' GROUP BY ' . join( ', ', $stack );
 		}
+
+		return '';
 	}
 
+	/**
+	 * @return string
+	 * @throws \Exception
+	 */
 	private function getWhere() {
 		if ( $this->activeFlags && ! $this->includeDeleted ) {
 			$tables = &$this->tables;
@@ -886,8 +903,12 @@ class DBConn {
 				foreach ( explode( ",", $where ) as $w ) {
 					foreach ( self::OPERATORS as $ope ) {
 						if ( substr_count( strtoupper( $w ), $ope ) ) {
-							$condition = explode( $ope, $w );
-							$stack[]   = $this->createCondition( $this->tables[ $i ]['name'], $condition[0], $ope, $condition[1] ?? '' );
+							$condition = explode( $ope, trim( $w ) );
+							if ( empty( $condition[1] ) ) {
+								$stack[] = sprintf( "%s.%s %s", $this->tables[ $i ]['name'], trim( $condition[0] ), $ope );
+							} else {
+								$stack[] = sprintf( "%s.%s %s %s", $this->tables[ $i ]['name'], trim( $condition[0] ), $ope, trim( $condition[1] ) );
+							}
 						}
 					}
 				}
@@ -900,7 +921,6 @@ class DBConn {
 //				}
 //			}
 //		}
-
 		if ( $stack ) {
 			return ' WHERE ' . join( ' AND ', $stack );
 		}
