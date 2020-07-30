@@ -12,6 +12,7 @@ class DBConn {
 	const JOIN_TYPE_INNER = 'INNER';
 	const JOIN_TYPE_LEFT = 'LEFT';
 	const JOIN_TYPE_RIGHT = 'RIGHT';
+	const OPERATORS = [ '>=', '<=', '<>', '!=', '=', '>', '<', 'LIKE', 'IS NULL', 'IS NOT NULL' ];
 
 	protected $_host;
 	protected $_user;
@@ -41,6 +42,8 @@ class DBConn {
 	private $with;
 	private $rawWhere;
 	private $activeFlags;
+	private $meta;
+
 
 	/**
 	 * DBConn constructor.
@@ -487,8 +490,7 @@ class DBConn {
 			$operator     = '=';
 			$foreignField = '';
 		} else {
-			$operators = [ '>=', '<=', '<>', '!=', '>', '<', '=', 'IS NULL' ];
-			if ( in_array( trim( strtoupper( $foreignFieldOrOperator ) ), $operators ) ) {
+			if ( in_array( trim( strtoupper( $foreignFieldOrOperator ) ), self::OPERATORS ) ) {
 				$operator     = $foreignFieldOrOperator;
 				$foreignField = $justForeignField;
 			} else {
@@ -681,27 +683,39 @@ class DBConn {
 		return $this;
 	}
 
-	private function getTable( $table ) {
-		$meta = [];
+	/**
+	 * @param string $table
+	 *
+	 * @return object
+	 * @throws \Exception
+	 */
+	private function getTable( string $table ) {
+		if ( $this->meta[ $table ] ) {
+			return $this->meta[ $table ];
+		}
+
+		$metaTable = [];
+		$metaKey   = [];
 		try {
 			$columns      = mysqli_fetch_all( $this->query( "SHOW COLUMNS FROM $table" ), MYSQLI_ASSOC );
-			$this->fields = $meta['fields'] = array_column( $columns, 'field' );
+			$this->fields = $metaTable['fields'] = array_column( $columns, 'field' );
 
-			$this->key = (object) [];
-			$key       = array_filter( $columns, function ( $item ) {
+			$key = array_filter( $columns, function ( $item ) {
 				return ( $item['Key'] == 'PRI' );
 			} );
 
 			if ( $key ) {
-				$this->key->name = $key[0]['Field'];
-				$this->key->auto = substr_count( $key[0]['Extra'], "auto_increment" ) > 0;
+				$metaKey['name'] = $key[0]['Field'];
+				$metaKey['auto'] = substr_count( $key[0]['Extra'], "auto_increment" ) > 0;
 			}
-			$meta['key'] = $this->key;
+			$this->key = $metaTable['key'] = (object) $metaKey;
 		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
 
-		return (object) $meta;
+		$this->meta[ $table ] = (object) $metaTable;
+
+		return $this->meta[ $table ];
 	}
 
 	private function softDelete() {
@@ -848,55 +862,50 @@ class DBConn {
 	private function getWhere() {
 		if ( $this->activeFlags && ! $this->includeDeleted ) {
 			$tables = &$this->tables;
-			if ( $this->ignore ) {
-				$tables = array_filter( $tables, function ( $table ) {
-					return ! in_array( $table, $this->ignore );
-				}, ARRAY_FILTER_USE_KEY );
-			}
-
 			foreach ( $tables as $i => $table ) {
-				$this->getTable( $table['name'] );
-				$actives = array();
-				foreach ( $this->activeFlags as $f ) {
-					if ( in_array( $f, $this->fields ) ) {
-						$actives[] = "$f = 1";
-					}
+				if ( in_array( $i, $this->ignore ) ) {
+					continue;
 				}
-				if ( $actives ) {
-					$w                 = $this->where[ $i ] ? explode( ",", $this->where[ $i ] ) : array();
-					$this->where[ $i ] = implode( ",", array_merge( $w, $actives ) );
+
+				$metaTable = $this->getTable( $table['name'] );
+				$flags     = [];
+				foreach ( array_intersect_key( $this->activeFlags, array_flip( $metaTable->fields ) ) as $flag ) {
+					$flags[] = $flag . ' ' . $this->activeFlags[ $flag ]['condition'];
+				}
+
+				if ( $flags ) {
+					$where             = explode( ',', $this->where[ $i ] ?? '' );
+					$this->where[ $i ] = join( ',', array_merge( $where, $flags ) );
 				}
 			}
 		}
-
+		$stack = [];
 		if ( $this->where ) {
-			if ( count( $this->where ) <= count( $this->tables ) ) {
-				$operators = array( ">=", "<=", "<>", "!=", "=", ">", "<", "like", "is null", "is not null" );
-				foreach ( $this->where as $i => $where ) {
-					foreach ( explode( ",", $where ) as $w ) {
-						foreach ( $operators as $ope ) {
-							if ( substr_count( $w, $ope ) ) {
-								$condition = explode( $ope, $w );
-								$value     = "'" . trim( $condition[1] ) . "'";
-								$array[]   = $this->tables[ $i ]['name'] . "." . trim( $condition[0] ) . " " . $ope . " " . $value;
-							}
+			if ( count( $this->where ) > count( $this->tables ) ) {
+				$this->error( 'Where statement does not match with tables count' );
+			}
+
+			foreach ( $this->where as $i => $where ) {
+				foreach ( explode( ",", $where ) as $w ) {
+					foreach ( self::OPERATORS as $ope ) {
+						if ( substr_count( $w, $ope ) ) {
+							$condition = explode( $ope, $w );
+							$stack[]   = trim( sprintf( "%s.%s %s %s", $this->tables[ $i ]['name'], trim( $condition[0] ), $ope, trim( $condition[1] ) ) );
 						}
 					}
 				}
-			} else {
-				$this->error( "Where statement doesn't match with tables count" );
 			}
 		}
 		if ( $this->rawWhere ) {
 			foreach ( $this->rawWhere as $i => $raw ) {
 				foreach ( $raw as $r ) {
-					$array[] = $this->tables[ $i ]['name'] . "." . $r;
+					$stack[] = $this->tables[ $i ]['name'] . "." . $r;
 				}
 			}
 		}
 
-		if ( $array ) {
-			return " WHERE " . implode( " and ", $array );
+		if ( $stack ) {
+			return " WHERE " . implode( " and ", $stack );
 		}
 
 	}
