@@ -887,24 +887,25 @@ class DBConn {
 					foreach ( self::OPERATORS as $ope ) {
 						if ( substr_count( strtoupper( $w ), $ope ) ) {
 							$condition = explode( $ope, $w );
-							$stack[]   = $this->setCondition( $this->tables[ $i ]['name'], $condition[0], $ope, $condition[1] ?? '' );
+							$stack[]   = $this->createCondition( $this->tables[ $i ]['name'], $condition[0], $ope, $condition[1] ?? '' );
 						}
 					}
 				}
 			}
 		}
-		if ( $this->rawWhere ) {
-			foreach ( $this->rawWhere as $i => $raw ) {
-				foreach ( $raw as $r ) {
-					$stack[] = $this->tables[ $i ]['name'] . "." . $r;
-				}
-			}
-		}
+//		if ( $this->rawWhere ) {
+//			foreach ( $this->rawWhere as $i => $raw ) {
+//				foreach ( $raw as $r ) {
+//					$stack[] = $this->tables[ $i ]['name'] . "." . $r;
+//				}
+//			}
+//		}
 
 		if ( $stack ) {
-			return " WHERE " . implode( " and ", $stack );
+			return ' WHERE ' . join( ' AND ', $stack );
 		}
 
+		return '';
 	}
 
 	private function getWiths(
@@ -1046,7 +1047,7 @@ class DBConn {
 	 * @return string
 	 * @throws \Exception
 	 */
-	private function setCondition( string $table, string $field, string $operator, string $value = '' ) {
+	private function createCondition( string $table, string $field, string $operator, string $value = '' ) {
 		if ( empty( $value ) ) {
 			return sprintf( "%s.%s %s", $table, trim( $field ), $operator );
 		}
