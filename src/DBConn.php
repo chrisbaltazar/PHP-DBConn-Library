@@ -493,6 +493,14 @@ class DBConn {
 		return $this;
 	}
 
+	/**
+	 * @param string $tableField
+	 * @param string $foreignFieldOrOperator
+	 * @param string $justForeignField
+	 *
+	 * @return $this
+	 * @throws \Exception
+	 */
 	public function on( string $tableField, string $foreignFieldOrOperator = '', string $justForeignField = '' ) {
 		if ( ! count( $this->tables ) > 1 ) {
 			$this->error( 'No join tables declared yet' );
@@ -505,8 +513,7 @@ class DBConn {
 
 		if ( empty( $foreignFieldOrOperator ) ) {
 			$operator     = '=';
-			$targetTable  = $this->getNormalizedTarget( $tableJoin['target'] );
-			$foreignField = $targetTable . '_id';
+			$foreignField = '';
 		} else {
 			$operators = [ '>=', '<=', '<>', '!=', '>', '<', '=', 'IS NULL' ];
 			if ( in_array( trim( strtoupper( $foreignFieldOrOperator ) ), $operators ) ) {
@@ -525,68 +532,52 @@ class DBConn {
 	/**
 	 * set the order fields for the query builder
 	 *
-	 * @param type $params
+	 * @param array $args
 	 *
 	 * @return $this
 	 */
-	public function order( $params ) {
-		if ( is_array( $params ) ) {
-			$this->order = $params;
-		} else {
-			$this->order = array( $params );
-		}
+	public function order( ...$args ) {
+		$this->order = $args;
 
 		return $this;
 	}
 
 	/**
-	 * set the group fields for the query builer
+	 * set the group fields for the query builder
 	 *
-	 * @param type $params
+	 * @param array $args
 	 *
 	 * @return $this
 	 */
-	public function group( $params ) {
-		if ( is_array( $params ) ) {
-			$this->group = $params;
-		} else {
-			$this->group = array( $params );
-		}
+	public function group( ...$args ) {
+		$this->group = $args;
 
 		return $this;
 	}
 
 	/**
-	 * set the group where conditions for the query builer
+	 * set the group where conditions for the query builder
 	 *
-	 * @param type $params
+	 * @param array $args
 	 *
 	 * @return $this
 	 */
-	public function where( $params ) {
-		if ( is_array( $params ) ) {
-			$this->where = $params;
-		} else {
-			$this->where = array( $params );
-		}
+	public function where( ...$args ) {
+		$this->where = $args;
 
 		return $this;
 	}
 
 	/**
-	 * set the RAW special conditions for the query builer
+	 * set the RAW special conditions for the query builder
 	 *
-	 * @param type $params
+	 * @param array $args
 	 *
 	 * @return $this
 	 */
-	public function whereRaw( $params ) {
-		if ( is_array( $params ) ) {
-			foreach ( $params as $i => $raw ) {
-				$this->rawWhere[ $i ][] = $raw;
-			}
-		} else {
-			$this->error( "RAW Statement must be an array" );
+	public function whereRaw( array $args ) {
+		foreach ( $args as $i => $raw ) {
+			$this->rawWhere[ $i ][] = $raw;
 		}
 
 		return $this;
@@ -595,12 +586,9 @@ class DBConn {
 	/**
 	 * include records marked as DELETED with the flags, to be included in query
 	 *
-	 * @param type $params
-	 *
 	 * @return $this
 	 */
 	public function withDeletes() {
-
 		$this->includeDeleted = true;
 
 		return $this;
@@ -663,10 +651,10 @@ class DBConn {
 	 * @return string
 	 */
 	public function getSQL() {
-		var_dump( $this->tables );
 		$sql = "";
 		$sql .= $this->getSelect();
 		$sql .= $this->getSource();
+		die($sql);
 		$sql .= $this->getWhere();
 		$sql .= $this->getGroup();
 		$sql .= $this->getOrder();
@@ -700,14 +688,24 @@ class DBConn {
 		return $result ?? false;
 	}
 
-	private function addWith( $type, $table, $foreign, $alias, $pluck ) {
+	/**
+	 * @param string $type
+	 * @param string $table
+	 * @param string $foreign
+	 * @param string $alias
+	 * @param string $pluck
+	 *
+	 * @return $this
+	 * @throws \Exception
+	 */
+	private function addWith( string $type, string $table, string $foreign, string $alias = '', string $pluck = '' ) {
 		if ( $this->tables ) {
-			$this->with[ $type ][] = array(
-				"table"   => $table,
-				"foreign" => $foreign,
-				"alias"   => $alias ? $alias : $table,
-				"pluck"   => $pluck
-			);
+			$this->with[ $type ][] = [
+				'table'   => $table,
+				'foreign' => $foreign,
+				'alias'   => $alias ?: $table,
+				'pluck'   => $pluck
+			];
 		} else {
 			$this->error( "With statement needs a main source table selected" );
 		}
@@ -785,19 +783,24 @@ class DBConn {
 		return $map;
 	}
 
+	/**
+	 * @return string
+	 * @throws \Exception
+	 */
 	private function getSelect() {
 		$sql = "SELECT ";
 		if ( $this->select ) {
-			if ( count( $this->select ) <= count( $this->tables ) ) {
-				foreach ( $this->select as $i => $select ) {
-					foreach ( explode( ",", $select ) as $field ) {
-						$array[] = $this->tables[ $i ]['name'] . "." . trim( $field );
-					}
-				}
-				$sql .= implode( ", ", $array );
-			} else {
+			if ( count( $this->select ) > count( $this->tables ) ) {
 				$this->error( "Select statement doesn't match with tables count" );
 			}
+
+			$stack = [];
+			foreach ( $this->select as $i => $select ) {
+				foreach ( explode( ",", $select ) as $field ) {
+					$stack[] = $this->tables[ $i ]['name'] . "." . trim( $field );
+				}
+			}
+			$sql .= implode( ", ", $stack );
 		} else {
 			$sql .= " * ";
 		}
@@ -805,19 +808,27 @@ class DBConn {
 		return $sql;
 	}
 
+	/**
+	 * @return string
+	 * @throws \Exception
+	 */
 	private function getSource() {
+		$source = [];
 		if ( $this->tables ) {
-			$source[] = " FROM " . $this->tables[0]['name'];
+			$source[] = ' FROM ' . $this->tables[0]['name'];
 			for ( $i = 1; $i < count( $this->tables ); $i ++ ) {
-				$source[] = $this->tables[ $i ]['join'] . " JOIN "
-				            . $this->tables[ $i ]['name'] . " ON "
-				            . $this->getRelation( $i );
+				if ( ! $this->tables[ $i ]['relation'] ) {
+					$this->setRelation( $i, 'id', '=', '' );
+				}
+				$source[] = $this->tables[ $i ]['join'] . ' JOIN '
+				            . $this->tables[ $i ]['name'] . ' ON '
+				            . $this->tables[ $i ]['relation'];
 			}
 		} else {
-			$this->error( "You have no tables registered yet" );
+			$this->error( 'You have no tables registered yet' );
 		}
 
-		return implode( " ", $source );
+		return join( ' ', $source );
 	}
 
 	private function getRelation( $index ) {
@@ -917,7 +928,9 @@ class DBConn {
 
 	}
 
-	private function getWiths( $data ) {
+	private function getWiths(
+		$data
+	) {
 		if ( $this->with ) {
 			$key = $this->getTable( $this->tables[0]['name'] )->key->name;
 			try {
@@ -961,7 +974,9 @@ class DBConn {
 	 *
 	 * @return false|string
 	 */
-	private function getNormalizedTarget( int $index ) {
+	private function getNormalizedTarget(
+		int $index
+	) {
 		$target = $this->tables[ $index ]['name'];
 		if ( substr( $target, - 1 ) == 's' ) {
 			return substr( $target, 0, strlen( $target ) - 1 );
@@ -975,7 +990,9 @@ class DBConn {
 	 *
 	 * @throws \Exception
 	 */
-	private function error( string $msg = '' ) {
+	private function error(
+		string $msg = ''
+	) {
 		if ( $this->_debug ) {
 			$error = [
 				mysqli_error( $this->cn ),
@@ -1011,15 +1028,18 @@ class DBConn {
 	 * @param int $index
 	 * @param string $tableField
 	 * @param string $operator
-	 * @param string $foreigField
+	 * @param string $foreignField
 	 *
 	 * @return $this
 	 */
-	private function setRelation( int $index, string $tableField, string $operator, string $foreigField ) {
+	private function setRelation( int $index, string $tableField, string $operator, string $foreignField ) {
 		$tableJoin   = $this->tables[ $index ];
 		$tableTarget = $this->tables[ $tableJoin['target'] ];
+		if ( empty( $foreignField ) ) {
+			$foreignField = $this->getNormalizedTarget( $tableJoin['target'] ) . '_id';
+		}
 
-		$relaion                            = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreigField );
+		$relaion                            = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreignField );
 		$this->tables[ $index ]['relation'] = $relaion;
 
 		return $this;
