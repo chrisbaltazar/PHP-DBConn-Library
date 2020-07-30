@@ -457,8 +457,9 @@ class DBConn {
 	 * @return $this
 	 */
 	public function from( string $source ) {
-		$this->tables = [ 'name' => $source ];
-		$this->with   = [];
+		$this->tables   = [];
+		$this->with     = [];
+		$this->tables[] = [ 'name' => $source ];
 
 		return $this;
 	}
@@ -492,7 +493,7 @@ class DBConn {
 		return $this;
 	}
 
-	public function on( string $tableField = 'id', string $foreignFieldOrOperator = '', string $justForeignField = '' ) {
+	public function on( string $tableField, string $foreignFieldOrOperator = '', string $justForeignField = '' ) {
 		if ( ! count( $this->tables ) > 1 ) {
 			$this->error( 'No join tables declared yet' );
 		}
@@ -502,18 +503,23 @@ class DBConn {
 			$this->error( 'ON method MUST be called right after making a JOIN' );
 		}
 
-		$targetTable = $this->getNormalizedTarget( $tableJoin['target'] );
 		if ( empty( $foreignFieldOrOperator ) ) {
-			$relaion = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, '=', $this->tables[ $tableJoin['target'] ]['name'], 'id' );
+			$operator     = '=';
+			$targetTable  = $this->getNormalizedTarget( $tableJoin['target'] );
+			$foreignField = $targetTable . '_id';
 		} else {
-			$operators = [ '>=', '<=', '>', '<', '=', 'IS NULL' ];
-			if ( in_array( $foreignFieldOrOperator, $operators ) ) {
-
+			$operators = [ '>=', '<=', '<>', '!=', '>', '<', '=', 'IS NULL' ];
+			if ( in_array( trim( strtoupper( $foreignFieldOrOperator ) ), $operators ) ) {
+				$operator     = $foreignFieldOrOperator;
+				$foreignField = $justForeignField;
+			} else {
+				$operator     = '=';
+				$foreignField = $foreignFieldOrOperator;
 			}
 		}
+		$index = count( $this->tables ) - 1;
 
-
-		return $this;
+		return $this->setRelation( $index, $tableField, $operator, $foreignField );
 	}
 
 	/**
@@ -657,6 +663,7 @@ class DBConn {
 	 * @return string
 	 */
 	public function getSQL() {
+		var_dump( $this->tables );
 		$sql = "";
 		$sql .= $this->getSelect();
 		$sql .= $this->getSource();
@@ -998,6 +1005,24 @@ class DBConn {
 		}
 
 		return true;
+	}
+
+	/**
+	 * @param int $index
+	 * @param string $tableField
+	 * @param string $operator
+	 * @param string $foreigField
+	 *
+	 * @return $this
+	 */
+	private function setRelation( int $index, string $tableField, string $operator, string $foreigField ) {
+		$tableJoin   = $this->tables[ $index ];
+		$tableTarget = $this->tables[ $tableJoin['target'] ];
+
+		$relaion                            = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreigField );
+		$this->tables[ $index ]['relation'] = $relaion;
+
+		return $this;
 	}
 
 }
