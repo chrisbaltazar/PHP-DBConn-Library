@@ -2,8 +2,6 @@
 
 namespace DBConn;
 
-use http\Exception\UnexpectedValueException;
-
 /**
  * Class DBConn
  * Easy and fast DB queries for everyone
@@ -15,15 +13,17 @@ class DBConn {
 	const JOIN_TYPE_LEFT = 'LEFT';
 	const JOIN_TYPE_RIGHT = 'RIGHT';
 
-	private $_host;
-	private $_user;
-	private $_password;
-	private $_name;
-	private $_session;
-	private $_debug;
-	private $_timezone;
-	private $_summertime;
-	private $_charset;
+	protected $_host;
+	protected $_user;
+	protected $_password;
+	protected $_name;
+	protected $_session;
+	protected $_debug;
+	protected $_timezone;
+	protected $_summertime;
+	protected $_charset;
+
+	protected $tablestamps;
 
 	private $cn;
 	private $id;
@@ -31,8 +31,6 @@ class DBConn {
 	private $sql;
 	private $fields;
 	private $key;
-	private $tablestamps;
-	private $flags;
 	private $tables;
 	private $select;
 	private $order;
@@ -42,7 +40,7 @@ class DBConn {
 	private $ignore;
 	private $with;
 	private $rawWhere;
-
+	private $activeFlags;
 
 	/**
 	 * DBConn constructor.
@@ -58,22 +56,23 @@ class DBConn {
 		$this->_summertime = defined( 'SUMMER_TIME' ) ? SUMMER_TIME : $_ENV['SUMMER_TIME'] ?? true;
 		$this->_charset    = defined( 'CHARSET' ) ? CHARSET : $_ENV['CHARSET'] ?? 'utf8';
 
+		$this->tablestamps = [
+			'updated_by' => $_SESSION[ $this->_session ] ?? null,
+			'updated_at' => 'NOW()'
+		];
+
+		$this->addActiveFlag( 'updated_at', 'IS_NULL', 'NOW()' );
+
 		$this->init();
 	}
 
 	/**
 	 * initialize class vars to use them
 	 */
-	private function init() {
+	protected function init() {
 		if ( ! $this->validateData() ) {
 			throw new \UnexpectedValueException( 'Some of the db fields are missing' );
 		}
-
-		$this->tablestamps = [
-			'updated_by' => $_SESSION[ $this->_session ] ?? null,
-			'updated_at' => 'NOW()'
-		];
-		$this->flags       = [ 'active' ];
 
 		$this->where          = [];
 		$this->select         = [];
@@ -123,39 +122,12 @@ class DBConn {
 	}
 
 	/**
-	 * set the fields for stamps used for updates automatically on any table
-	 *
-	 * @param array $stamps
-	 *
-	 * @return $this
-	 */
-	public function setTablestamps( array $stamps ) {
-		$this->tablestamps = $stamps;
-
-		return $this;
-	}
-
-	/**
-	 * set the fields used as flags for updates instead of deletes on any table
-	 *
-	 * @param array $flags
-	 *
-	 * @return $this
-	 */
-	public function setFlags( array $flags ) {
-		$this->flags = $flags;
-
-		return $this;
-	}
-
-	/**
 	 * get the number of rows affected by the last operation
 	 * @return int
 	 */
 	public function affectedRows() {
 		return $this->rows ?? 0;
 	}
-
 
 	/**
 	 * get the auto inserted ID on the last query
@@ -630,31 +602,27 @@ class DBConn {
 
 
 	/**
-	 * Ignore the flags declared to reach all the records "DELETEDS" on any table
+	 * Ignore the flags declared to reach all the records "DELETED" on any table
 	 *
-	 * @param type $params
+	 * @param array $args
 	 *
 	 * @return $this
 	 */
-	public function ignoreActive( $params ) {
-		if ( is_array( $params ) ) {
-			$this->ignore = $params;
+	public function ignoreActive( array $args ) {
+		$this->ignore = $args;
 
-			return $this;
-		} else {
-			$this->error( "Ignore statement must be an array" );
-		}
+		return $this;
 	}
 
 	/**
 	 * Build and return all the query saved in the instance
 	 * @return string
+	 * @throws \Exception
 	 */
 	public function getSQL() {
-		$sql = "";
+		$sql = '';
 		$sql .= $this->getSelect();
 		$sql .= $this->getSource();
-		die($sql);
 		$sql .= $this->getWhere();
 		$sql .= $this->getGroup();
 		$sql .= $this->getOrder();
@@ -714,32 +682,32 @@ class DBConn {
 	}
 
 	private function getTable( $table ) {
+		$meta = [];
 		try {
-			$meta         = new static();
 			$columns      = mysqli_fetch_all( $this->query( "SHOW COLUMNS FROM $table" ), MYSQLI_ASSOC );
-			$this->fields = $this->lists( $columns, "Field" );
-			$meta->fields = $this->fields;
+			$this->fields = $meta['fields'] = array_column( $columns, 'field' );
 
-			$fn        = function ( $item ) {
-				return ( $item['Key'] == "PRI" );
-			};
-			$this->key = new static();
-			if ( $k = array_filter( $columns, $fn ) ) {
-				$this->key->name = $k[0]['Field'];
-				$this->key->auto = substr_count( $k[0]['Extra'], "auto_increment" );
+			$this->key = (object) [];
+			$key       = array_filter( $columns, function ( $item ) {
+				return ( $item['Key'] == 'PRI' );
+			} );
+
+			if ( $key ) {
+				$this->key->name = $key[0]['Field'];
+				$this->key->auto = substr_count( $key[0]['Extra'], "auto_increment" ) > 0;
 			}
-			$meta->key = $this->key;
-		} catch ( Exception $ex ) {
+			$meta['key'] = $this->key;
+		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
 
-		return $meta;
+		return (object) $meta;
 	}
 
 	private function softDelete() {
-		if ( $this->flags ) {
+		if ( $this->activeFlags ) {
 			$delete = array();
-			foreach ( $this->flags as $flag ) {
+			foreach ( $this->activeFlags as $flag ) {
 				if ( in_array( $flag, $this->fields ) ) {
 					$delete[ $flag ] = 0;
 				}
@@ -878,20 +846,25 @@ class DBConn {
 	}
 
 	private function getWhere() {
-		if ( $this->flags && ! $this->includeDeleted ) {
-			foreach ( $this->tables as $i => $table ) {
-				if ( ! in_array( $i, $this->ignore ) ) {
-					$this->getTable( $table['name'] );
-					$actives = array();
-					foreach ( $this->flags as $f ) {
-						if ( in_array( $f, $this->fields ) ) {
-							$actives[] = "$f = 1";
-						}
+		if ( $this->activeFlags && ! $this->includeDeleted ) {
+			$tables = &$this->tables;
+			if ( $this->ignore ) {
+				$tables = array_filter( $tables, function ( $table ) {
+					return ! in_array( $table, $this->ignore );
+				}, ARRAY_FILTER_USE_KEY );
+			}
+
+			foreach ( $tables as $i => $table ) {
+				$this->getTable( $table['name'] );
+				$actives = array();
+				foreach ( $this->activeFlags as $f ) {
+					if ( in_array( $f, $this->fields ) ) {
+						$actives[] = "$f = 1";
 					}
-					if ( $actives ) {
-						$w                 = $this->where[ $i ] ? explode( ",", $this->where[ $i ] ) : array();
-						$this->where[ $i ] = implode( ",", array_merge( $w, $actives ) );
-					}
+				}
+				if ( $actives ) {
+					$w                 = $this->where[ $i ] ? explode( ",", $this->where[ $i ] ) : array();
+					$this->where[ $i ] = implode( ",", array_merge( $w, $actives ) );
 				}
 			}
 		}
@@ -938,9 +911,9 @@ class DBConn {
 					foreach ( $this->with as $type => $with ) {
 						foreach ( $with as $w ) {
 							$where = array( $w['foreign'] . " = '" . $d[ $key ] . "'" );
-							if ( $this->flags ) {
+							if ( $this->activeFlags ) {
 								$map = $this->getTable( $w['table'] )->fields;
-								foreach ( $this->flags as $flag ) {
+								foreach ( $this->activeFlags as $flag ) {
 									if ( in_array( $flag, $map ) ) {
 										$where[] = $flag . " = 1";
 									}
@@ -1041,6 +1014,19 @@ class DBConn {
 
 		$relaion                            = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreignField );
 		$this->tables[ $index ]['relation'] = $relaion;
+
+		return $this;
+	}
+
+	/**
+	 * @param string $fieldName
+	 * @param string $condition
+	 * @param string $fillValue
+	 *
+	 * @return DBConn
+	 */
+	protected function addActiveFlag( string $fieldName, string $condition, string $fillValue ) {
+		$this->activeFlags[ $fieldName ] = [ 'condition' => $condition, 'fill' => $fillValue ];
 
 		return $this;
 	}
