@@ -46,6 +46,8 @@ class DBConn {
 	private $activeFlags;
 	private $meta;
 	private $values;
+	private $limit;
+	private $offset;
 
 
 	/**
@@ -86,32 +88,9 @@ class DBConn {
 		$this->group          = [];
 		$this->ignore         = [];
 		$this->rawWhere       = [];
+		$this->limit          = null;
+		$this->offset         = null;
 		$this->includeDeleted = false;
-	}
-
-	/**
-	 * get the current time zone according with the summer schedule
-	 *
-	 * @return string
-	 */
-	private function getTimezone() {
-		preg_match( '<GMT([+-]\d{1,2})>', $this->_timezone, $matches );
-		if ( empty( $matches ) ) {
-			throw new \UnexpectedValueException( 'Timezone value incorrect ' + $this->_timezone );
-		}
-
-		$timezone = $matches[1];
-		if ( $this->_summertime ) {
-			$year         = date( 'Y' );
-			$now          = strtotime( date( 'Y-m-d' ) );
-			$start_summer = strtotime( $year . '-03-31 next Sunday' );
-			$end_summer   = strtotime( $year . '-11-01 last Sunday' );
-			if ( $now >= $start_summer && $now < $end_summer ) {
-				$timezone += 1;
-			}
-		}
-
-		return $timezone . ':00';
 	}
 
 	/**
@@ -195,6 +174,7 @@ class DBConn {
 		if ( ! $sql ) {
 			$sql = $this->getSQL();
 		}
+
 		$result = [];
 		$ds     = $this->query( $sql );
 		try {
@@ -285,37 +265,6 @@ class DBConn {
 	}
 
 	/**
-	 * check existence of something into a table based on the condition given
-	 *
-	 * @param type $field
-	 * @param type $table
-	 * @param type $condition
-	 *
-	 * @return type
-	 */
-	public function exist( $field, $table, $condition ) {
-		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					$sql = "select IFNULL(" . $field . ", 0) from " . $table . " where " . $condition;
-					$ds  = $this->query( $sql );
-					$res = mysqli_fetch_row( $ds );
-					break;
-				case "SQLDRIVER":
-					$sql = "select ISNULL(" . $field . "), NULL) from " . $table . ( $condition == "" ? "" : " where " . $condition );
-					$ds  = $this->query( $sql );
-					$res = sqlsrv_fetch_array( $ds );
-					break;
-			}
-		} catch ( Exception $ex ) {
-			$this->error( $ex->getMessage() );
-		}
-		$this->close();
-
-		return $res[0];
-	}
-
-	/**
 	 * executes a query, only for insert, update, delete operations
 	 *
 	 * @param string $sql
@@ -328,27 +277,6 @@ class DBConn {
 		$this->close();
 
 		return $this->affectedRows();
-	}
-
-	/**
-	 * maps an array list, getting a plain value array or concated string
-	 *
-	 * @param type $data
-	 * @param type $value
-	 * @param type $implode
-	 *
-	 * @return type
-	 */
-	public function lists( $data, $value, $implode = false ) {
-		$array = Array();
-		foreach ( $data as $r ) {
-			$array[] = $r[ $value ];
-		}
-		if ( $implode ) {
-			return implode( ",", $array );
-		}
-
-		return $array;
 	}
 
 	/**
@@ -538,6 +466,13 @@ class DBConn {
 		return $this;
 	}
 
+	public function only( int $limit, int $offset = null ) {
+		$this->limit  = $limit;
+		$this->offset = $offset;
+
+		return $this;
+	}
+
 	/**
 	 * set the RAW special conditions for the query builder
 	 *
@@ -568,15 +503,16 @@ class DBConn {
 	 * set one relation with relative data that has to be extracted with the main query,
 	 * attached as an ARRAY LIST on the results
 	 *
-	 * @param type $table
-	 * @param type $foreign
-	 * @param type $alias
-	 * @param type $pluck
+	 * @param string $table
+	 * @param string $foreignField
+	 * @param string $alias
+	 * @param string $pluck
 	 *
 	 * @return $this
+	 * @throws \Exception
 	 */
-	public function withMany( $table, $foreign, $alias = "", $pluck = "" ) {
-		$this->addWith( "MANY", $table, $foreign, $alias, $pluck );
+	public function withMany( string $table, string $foreignField, string $alias = '', string $pluck = '' ) {
+		$this->addWith( "MANY", $table, $foreignField, $alias, $pluck );
 
 		return $this;
 	}
@@ -587,8 +523,8 @@ class DBConn {
 	 *
 	 * @param type $table
 	 * @param type $foreign
-	 * @param type $alias
-	 * @param type $pluck
+	 * @param string $alias
+	 * @param string $pluck
 	 *
 	 * @return $this
 	 * @throws \Exception
@@ -603,12 +539,12 @@ class DBConn {
 	/**
 	 * Ignore the flags declared to reach all the records "DELETED" on any table
 	 *
-	 * @param array $args
+	 * @param array $tableIndex
 	 *
 	 * @return $this
 	 */
-	public function ignoreActive( array $args ) {
-		$this->ignore = $args;
+	public function ignoreActive( array $tableIndex ) {
+		$this->ignore = $tableIndex;
 
 		return $this;
 	}
@@ -625,6 +561,7 @@ class DBConn {
 		$sql .= $this->getWhere();
 		$sql .= $this->getGroup();
 		$sql .= $this->getOrder();
+		$sql .= $this->getLimits();
 
 		$this->init();
 
@@ -661,6 +598,31 @@ class DBConn {
 		}
 
 		return $result ?? false;
+	}
+
+	/**
+	 * get the current time zone according with the summer schedule
+	 *
+	 * @return string
+	 */
+	private function getTimezone() {
+		preg_match( '<GMT([+-]\d{1,2})>', $this->_timezone, $matches );
+		if ( empty( $matches ) ) {
+			throw new \UnexpectedValueException( 'Timezone value incorrect ' + $this->_timezone );
+		}
+
+		$timezone = $matches[1];
+		if ( $this->_summertime ) {
+			$year         = date( 'Y' );
+			$now          = strtotime( date( 'Y-m-d' ) );
+			$start_summer = strtotime( $year . '-03-31 next Sunday' );
+			$end_summer   = strtotime( $year . '-11-01 last Sunday' );
+			if ( $now >= $start_summer && $now < $end_summer ) {
+				$timezone += 1;
+			}
+		}
+
+		return $timezone . ':00';
 	}
 
 	/**
@@ -780,8 +742,10 @@ class DBConn {
 
 			$stack = [];
 			foreach ( $this->select as $i => $select ) {
-				foreach ( explode( ",", $select ) as $field ) {
-					$stack[] = $this->tables[ $i ]['name'] . "." . trim( $field );
+				if ( $select ) {
+					foreach ( explode( ",", $select ) as $field ) {
+						$stack[] = $this->tables[ $i ]['name'] . "." . trim( $field );
+					}
 				}
 			}
 			$sql .= implode( ", ", $stack );
@@ -930,9 +894,19 @@ class DBConn {
 		return '';
 	}
 
-	private function getWiths( $data ) {
-		if ( $this->with ) {
+	/**
+	 * @param array $data
+	 *
+	 * @return array
+	 * @throws \Exception
+	 */
+	private function getWiths( array $data ) {
+		if ( $data && $this->with ) {
 			$key = $this->getTable( $this->tables[0]['name'] )->key->name;
+			if ( ! isset( $data[0][ $key ] ) ) {
+				$this->error( 'You have to SELECT the PRIMARY KEY of the MAIN table to LOAD additional records OR use the same ALIAS' );
+			}
+
 			try {
 				foreach ( $data as $i => $d ) {
 					foreach ( $this->with as $type => $with ) {
@@ -946,18 +920,18 @@ class DBConn {
 							$result = $this->query( $sql );
 							switch ( $type ) {
 								case 'ONE':
-									$add = mysqli_fetch_assoc( $result );
+									$added = mysqli_fetch_assoc( $result );
 									break;
 								case 'MANY':
 								default:
-									$add = mysqli_fetch_all( $result, MYSQLI_ASSOC );
+									$added = mysqli_fetch_all( $result, MYSQLI_ASSOC );
 									break;
 							}
 
 							if ( $w['pluck'] ) {
-								$data[ $i ][ $w['alias'] ] = $this->lists( $add, $w['pluck'] );
+								$data[ $i ][ $w['alias'] ] = array_column( $added, $w['pluck'] );
 							} else {
-								$data[ $i ][ $w['alias'] ] = $add;
+								$data[ $i ][ $w['alias'] ] = $added;
 							}
 						}
 					}
@@ -966,6 +940,7 @@ class DBConn {
 				$this->error( $ex->getMessage() );
 			}
 		}
+		$this->close();
 
 		return $data;
 	}
@@ -989,7 +964,7 @@ class DBConn {
 	 *
 	 * @throws \Exception
 	 */
-	private function error( string $msg = '' ) {
+	protected function error( string $msg = '' ) {
 		if ( $this->_debug ) {
 			$error = [
 				mysqli_error( $this->cn ),
@@ -1106,6 +1081,22 @@ class DBConn {
 		}
 
 		return $flags;
+	}
+
+	/**
+	 * @return string
+	 */
+	private function getLimits() {
+		$limit = '';
+		if ( $this->limit ) {
+			$limit .= ' LIMIT ' . $this->limit;
+		}
+
+		if ( $this->offset ) {
+			$limit .= ' OFFSET ' . $this->offset;
+		}
+
+		return $limit;
 	}
 
 }
