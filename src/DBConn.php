@@ -86,7 +86,6 @@ class DBConn {
 		$this->group          = [];
 		$this->ignore         = [];
 		$this->rawWhere       = [];
-		$this->values         = [];
 		$this->includeDeleted = false;
 	}
 
@@ -150,6 +149,10 @@ class DBConn {
 	 * @throws \Exception
 	 */
 	public function connect() {
+		if ( $this->cn ) {
+			return $this->cn;
+		}
+
 		try {
 			$this->cn = mysqli_connect(
 				$this->_host,
@@ -157,6 +160,8 @@ class DBConn {
 				$this->_password,
 				$this->_name
 			);
+			mysqli_query( $this->cn, "SET NAMES '" . $this->_charset . "'" );
+			mysqli_query( $this->cn, "SET time_zone = '" . $this->getTimezone() . "'" );
 		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
@@ -171,6 +176,7 @@ class DBConn {
 	public function close() {
 		try {
 			mysqli_close( $this->cn );
+			$this->cn = null;
 		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
@@ -242,13 +248,14 @@ class DBConn {
 		$ds = $this->query( $sql );
 		try {
 			if ( mysqli_num_rows( $ds ) ) {
-				return mysqli_fetch_object( $ds );
+				$obj = mysqli_fetch_object( $ds );
 			}
-
-			return null;
 		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
+		$this->close();
+
+		return $obj ?? null;
 	}
 
 	/**
@@ -267,13 +274,14 @@ class DBConn {
 		$ds = $this->query( $sql );
 		try {
 			if ( mysqli_num_rows( $ds ) ) {
-				return current( mysqli_fetch_row( $ds ) );
+				$item = current( mysqli_fetch_row( $ds ) );
 			}
-
-			return null;
 		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
+		$this->close();
+
+		return $item ?? null;
 	}
 
 	/**
@@ -302,6 +310,7 @@ class DBConn {
 		} catch ( Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
+		$this->close();
 
 		return $res[0];
 	}
@@ -523,7 +532,8 @@ class DBConn {
 	 * @return $this
 	 */
 	public function where( ...$args ) {
-		$this->where = $args;
+		$this->where  = $args;
+		$this->values = [];
 
 		return $this;
 	}
@@ -630,16 +640,19 @@ class DBConn {
 	 * @throws \Exception
 	 */
 	private function query( string $sql ) {
-		$this->sql = $sql;
 		$this->connect();
 		// Sanitize values before querying once we have the connection
-		$sql = vprintf( $sql, array_map( function ( $item ) {
+		$sql = vsprintf( $sql, array_map( function ( $item ) {
+			if ( strpos( $item, '\'' ) === 0 ) {
+				return "'" . mysqli_real_escape_string( $this->cn, trim( $item, '\'' ) ) . "'";
+			}
+
 			return mysqli_real_escape_string( $this->cn, $item );
 		}, $this->values ) );
 
+		$this->sql = $sql;
+
 		try {
-			mysqli_query( $this->cn, "SET NAMES '" . $this->_charset . "'" );
-			mysqli_query( $this->cn, "SET time_zone = '" . $this->getTimezone() . "'" );
 			$result     = mysqli_query( $this->cn, $sql );
 			$this->rows = mysqli_affected_rows( $this->cn );
 			$this->id   = mysqli_insert_id( $this->cn );
@@ -1023,7 +1036,7 @@ class DBConn {
 			$foreignField = $this->getNormalizedTarget( $tableJoin['target'] ) . '_' . $this->primaryKey;
 		}
 
-		$this->tables[ $index ]['relation'] = sprintf( ' % s .%s % s % s .%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreignField );
+		$this->tables[ $index ]['relation'] = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreignField );
 
 		return $this;
 	}
@@ -1076,7 +1089,7 @@ class DBConn {
 	private function getInputValue( string $input ) {
 		$this->values[] = $input;
 
-		return ' % ' . count( $this->values ) . '$s';
+		return '%' . count( $this->values ) . '$s';
 	}
 
 	/**
