@@ -94,19 +94,6 @@ class DBConn {
 	}
 
 	/**
-	 * set the session var name for current user
-	 *
-	 * @param string $session
-	 *
-	 * @return $this
-	 */
-	public function setSession( string $session ) {
-		$this->_session = $session;
-
-		return $this;
-	}
-
-	/**
 	 * get the number of rows affected by the last operation
 	 * @return int
 	 */
@@ -167,7 +154,7 @@ class DBConn {
 	 * @param string $sql
 	 * @param string $format
 	 *
-	 * @return type
+	 * @return array
 	 * @throws \Exception
 	 */
 	public function getArray( string $sql = '', string $format = self::RETURN_FORMAT_ARRAY ) {
@@ -282,22 +269,28 @@ class DBConn {
 	/**
 	 * save a element into the table, based on the WHERE condition for insert or update
 	 *
-	 * @param type $table
-	 * @param type $data
-	 * @param type $where
+	 * @param string $table
+	 * @param array $data
+	 * @param array $where
 	 *
-	 * @return type
+	 * @return int
+	 * @throws \Exception
 	 */
-	public function save( $table, $data, $where = array() ) {
-		$this->getTable( $table );
-		if ( array_filter( $where ) ) {
-			$sql = "update $table set ";
+	public function save( string $table, array $data, array $where = [] ) {
+		$metaTable = $this->getTable( $table );
+		if ( $where = array_filter( $where ) ) {
+			$sql = "UPDATE $table SET ";
 		} else {
-			$sql = "insert into $table set ";
+			$sql = "INSERT INTO $table SET ";
 		}
-		$sql .= implode( ",", array_merge( $this->build( $data ), $this->getStamps() ) );
-		if ( array_filter( $where ) ) {
-			$sql .= " where " . $this->build( $where, " and " );
+
+		$stack = array_filter( $data, function ( $key ) use ( $metaTable ) {
+			return isset( $metaTable[ $key ] );
+		}, ARRAY_FILTER_USE_KEY );
+		$sql   .= join( ',', array_merge( $this->build( $stack ), $this->getStamps() ) );
+
+		if ( $where ) {
+			$sql .= ' WHERE ' . $this->build( $where, ' AND ' );
 		}
 
 		return $this->execute( $sql );
@@ -466,6 +459,12 @@ class DBConn {
 		return $this;
 	}
 
+	/**
+	 * @param int $limit
+	 * @param int|null $offset
+	 *
+	 * @return $this
+	 */
 	public function only( int $limit, int $offset = null ) {
 		$this->limit  = $limit;
 		$this->offset = $offset;
@@ -521,16 +520,16 @@ class DBConn {
 	 * set one relation with relative data that has to be extracted with the main query,
 	 * attached as a SINGLE OBJECT on the results
 	 *
-	 * @param type $table
-	 * @param type $foreign
+	 * @param string $table
+	 * @param string $foreignField
 	 * @param string $alias
 	 * @param string $pluck
 	 *
 	 * @return $this
 	 * @throws \Exception
 	 */
-	public function withOne( $table, $foreign, $alias = "", $pluck = "" ) {
-		$this->addWith( "ONE", $table, $foreign, $alias, $pluck );
+	public function withOne( string $table, string $foreignField, string $alias = '', string $pluck = '' ) {
+		$this->addWith( "ONE", $table, $foreignField, $alias, $pluck );
 
 		return $this;
 	}
@@ -682,6 +681,9 @@ class DBConn {
 		return $this->meta[ $table ];
 	}
 
+	/**
+	 * @return array|bool
+	 */
 	private function softDelete() {
 		if ( $this->activeFlags ) {
 			$delete = array();
@@ -697,6 +699,9 @@ class DBConn {
 		return false;
 	}
 
+	/**
+	 * @return array
+	 */
 	private function getStamps() {
 		if ( $this->tablestamps ) {
 			$stamps = array();
@@ -710,23 +715,29 @@ class DBConn {
 		}
 	}
 
-	private function build( $array, $join = "" ) {
-		foreach ( $array as $k => $v ) {
-			if ( in_array( $k, $this->fields ) && ! in_array( $k, array_keys( $this->tablestamps ) ) ) {
-				$builder[ $k ] = $v;
+	/**
+	 * @param $stack
+	 * @param string $join
+	 *
+	 * @return array|string
+	 */
+	private function build( array $stack, string $join = '' ) {
+		$builder = [];
+		foreach ( $stack as $key => $value ) {
+			if ( ! isset( $this->tablestamps[ $key ] ) ) {
+				$builder[ $key ] = $value;
 			}
 		}
 
-		$fn_map = function ( $k, $v ) {
-			return $k . " = " . ( isset( $v ) ? "'$v'" : "null" );
-		};
-		$map    = array_map( $fn_map, array_keys( $builder ), $builder );
+		$builder = array_map( function ( $k, $v ) {
+			return sprintf( '%s = %s', $k, $v ? "'$v'" : 'null' );
+		}, array_keys( $builder ), $builder );
 
 		if ( $join ) {
-			return implode( $join, $map );
+			return join( $join, $builder );
 		}
 
-		return $map;
+		return $builder;
 	}
 
 	/**
@@ -777,20 +788,6 @@ class DBConn {
 		}
 
 		return join( ' ', $source );
-	}
-
-	private function getRelation( $index ) {
-		$rel = $this->tables[ $index ]['relation'];
-		if ( substr_count( $rel, "=" ) ) {
-			$rel      = explode( "=", $rel );
-			$on[]     = $this->tables[ $index ]['name'] . "." . trim( $rel[0] );
-			$on[]     = $this->tables[ $this->tables[ $index ]['target'] ]['name'] . "." . trim( $rel[1] );
-			$relation = implode( " = ", $on );
-		} else {
-			$relation = $rel . " = " . $this->tables[ $this->tables[ $index ]['target'] ]['name'] . ".id";
-		}
-
-		return $relation;
 	}
 
 	/**
