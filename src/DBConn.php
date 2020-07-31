@@ -277,15 +277,15 @@ class DBConn {
 	 * @throws \Exception
 	 */
 	public function save( string $table, array $data, array $where = [] ) {
-		$metaTable = $this->getTable( $table );
+		$fields = $this->getTable( $table )->fields;
 		if ( $where = array_filter( $where ) ) {
 			$sql = "UPDATE $table SET ";
 		} else {
 			$sql = "INSERT INTO $table SET ";
 		}
 
-		$stack = array_filter( $data, function ( $key ) use ( $metaTable ) {
-			return isset( $metaTable[ $key ] );
+		$stack = array_filter( $data, function ( $key ) use ( $fields ) {
+			return isset( $fields[ $key ] );
 		}, ARRAY_FILTER_USE_KEY );
 		$sql   .= join( ',', array_merge( $this->build( $stack ), $this->getStamps() ) );
 
@@ -304,7 +304,7 @@ class DBConn {
 	 *
 	 * @return type
 	 */
-	public function delete( $table, $where ) {
+	public function delete( string $table, $where ) {
 		if ( $where ) {
 			$this->getTable( $table );
 			if ( $delete = $this->softDelete() ) {
