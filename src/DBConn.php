@@ -9,6 +9,7 @@ namespace DBConn;
 class DBConn {
 
 	const RETURN_FORMAT_ARRAY = 'ARRAY';
+	const RETURN_FORMAT_OBJECT = 'OBJECT';
 	const JOIN_TYPE_INNER = 'INNER';
 	const JOIN_TYPE_LEFT = 'LEFT';
 	const JOIN_TYPE_RIGHT = 'RIGHT';
@@ -24,7 +25,8 @@ class DBConn {
 	protected $_summertime;
 	protected $_charset;
 
-	protected $tablestamps;
+	protected $tablestamps = [];
+	protected $primaryKey = 'id';
 
 	private $cn;
 	private $id;
@@ -43,6 +45,7 @@ class DBConn {
 	private $rawWhere;
 	private $activeFlags;
 	private $meta;
+	private $values;
 
 
 	/**
@@ -64,7 +67,7 @@ class DBConn {
 			'updated_at' => 'NOW()'
 		];
 
-		$this->addActiveFlag( 'updated_at', 'IS_NULL', 'NOW()' );
+		$this->addActiveFlag( 'deleted_at', 'IS_NULL', 'NOW()' );
 
 		$this->init();
 	}
@@ -74,7 +77,7 @@ class DBConn {
 	 */
 	protected function init() {
 		if ( ! $this->validateData() ) {
-			throw new \UnexpectedValueException( 'Some of the db fields are missing' );
+			throw new \UnexpectedValueException( 'Some of the db config fields are missing' );
 		}
 
 		$this->where          = [];
@@ -83,6 +86,7 @@ class DBConn {
 		$this->group          = [];
 		$this->ignore         = [];
 		$this->rawWhere       = [];
+		$this->values         = [];
 		$this->includeDeleted = false;
 	}
 
@@ -185,39 +189,21 @@ class DBConn {
 		if ( ! $sql ) {
 			$sql = $this->getSQL();
 		}
-
+		$result = [];
 		$ds     = $this->query( $sql );
-		$result = array();
 		try {
-			switch ( $this->protocol ) {
-				case "MYSQL":
-					switch ( $format ) {
-						case "ARRAY":
-							$result = mysqli_fetch_all( $ds, "MYSQLI_ASSOC" );
-							break;
-						case "OBJECT":
-							while ( $row = mysqli_fetch_object( $ds ) ) {
-								$result[] = $row;
-							}
-							break;
+			switch ( $format ) {
+				case self::RETURN_FORMAT_OBJECT:
+					while ( $row = mysqli_fetch_object( $ds ) ) {
+						$result[] = $row;
 					}
 					break;
-				case "SQLDRIVER":
-					switch ( $format ) {
-						case "ARRAY":
-							while ( $r = sqlsrv_fetch_array( $ds, SQLSRV_FETCH_ASSOC ) ) {
-								$result[] = $r;
-							}
-							break;
-						case "OBJECT":
-							while ( $r = sqlsrv_fetch_object( $ds ) ) {
-								$result[] = $r;
-							}
-							break;
-					}
+				case self::RETURN_FORMAT_ARRAY:
+				default:
+					$result = mysqli_fetch_all( $ds, MYSQLI_ASSOC );
 					break;
 			}
-		} catch ( Exception $ex ) {
+		} catch ( \Exception $ex ) {
 			$this->error( $ex->getMessage() );
 		}
 
@@ -595,6 +581,7 @@ class DBConn {
 	 * @param type $pluck
 	 *
 	 * @return $this
+	 * @throws \Exception
 	 */
 	public function withOne( $table, $foreign, $alias = "", $pluck = "" ) {
 		$this->addWith( "ONE", $table, $foreign, $alias, $pluck );
@@ -626,8 +613,8 @@ class DBConn {
 		$sql .= $this->getSelect();
 		$sql .= $this->getSource();
 		$sql .= $this->getWhere();
-//		$sql .= $this->getGroup();
-//		$sql .= $this->getOrder();
+		$sql .= $this->getGroup();
+		$sql .= $this->getOrder();
 
 		$this->init();
 
@@ -645,6 +632,11 @@ class DBConn {
 	private function query( string $sql ) {
 		$this->sql = $sql;
 		$this->connect();
+		// Sanitize values before querying once we have the connection
+		$sql = vprintf( $sql, array_map( function ( $item ) {
+			return mysqli_real_escape_string( $this->cn, $item );
+		}, $this->values ) );
+
 		try {
 			mysqli_query( $this->cn, "SET NAMES '" . $this->_charset . "'" );
 			mysqli_query( $this->cn, "SET time_zone = '" . $this->getTimezone() . "'" );
@@ -797,7 +789,7 @@ class DBConn {
 			$source[] = ' FROM ' . $this->tables[0]['name'];
 			for ( $i = 1; $i < count( $this->tables ); $i ++ ) {
 				if ( ! $this->tables[ $i ]['relation'] ) {
-					$this->setRelation( $i, 'id', '=', '' );
+					$this->setRelation( $i, $this->primaryKey, '=', '' );
 				}
 				$source[] = $this->tables[ $i ]['join'] . ' JOIN '
 				            . $this->tables[ $i ]['name'] . ' ON '
@@ -881,12 +873,7 @@ class DBConn {
 					continue;
 				}
 
-				$metaTable = $this->getTable( $table['name'] );
-				$flags     = [];
-				foreach ( array_intersect_key( $this->activeFlags, $metaTable->fields ) as $flag ) {
-					$flags[] = $flag . ' ' . $this->activeFlags[ $flag ]['condition'];
-				}
-
+				$flags = $this->getActiveFlags( $table['name'] );
 				if ( $flags ) {
 					$where             = explode( ',', $this->where[ $i ] ?? '' );
 					$this->where[ $i ] = join( ',', array_merge( $where, $flags ) );
@@ -907,8 +894,10 @@ class DBConn {
 							if ( empty( $condition[1] ) ) {
 								$stack[] = sprintf( "%s.%s %s", $this->tables[ $i ]['name'], trim( $condition[0] ), $ope );
 							} else {
-								$stack[] = sprintf( "%s.%s %s %s", $this->tables[ $i ]['name'], trim( $condition[0] ), $ope, trim( $condition[1] ) );
+								$value   = $this->getInputValue( trim( $condition[1] ) );
+								$stack[] = sprintf( "%s.%s %s %s", $this->tables[ $i ]['name'], trim( $condition[0] ), $ope, $value );
 							}
+							break;
 						}
 					}
 				}
@@ -928,31 +917,30 @@ class DBConn {
 		return '';
 	}
 
-	private function getWiths(
-		$data
-	) {
+	private function getWiths( $data ) {
 		if ( $this->with ) {
 			$key = $this->getTable( $this->tables[0]['name'] )->key->name;
 			try {
 				foreach ( $data as $i => $d ) {
 					foreach ( $this->with as $type => $with ) {
 						foreach ( $with as $w ) {
-							$where = array( $w['foreign'] . " = '" . $d[ $key ] . "'" );
+							$where = [ $w['foreign'] . " = '" . $d[ $key ] . "'" ];
 							if ( $this->activeFlags ) {
-								$map = $this->getTable( $w['table'] )->fields;
-								foreach ( $this->activeFlags as $flag ) {
-									if ( in_array( $flag, $map ) ) {
-										$where[] = $flag . " = 1";
-									}
-								}
+								$flags = $this->getActiveFlags( $w['table'] );
+								$where = array_merge( $where, $flags );
 							}
-							$sql    = "select * from " . $w['table'] . " where " . implode( " and ", $where );
+							$sql    = 'select * from ' . $w['table'] . ' where ' . join( ' AND ', $where );
 							$result = $this->query( $sql );
-							if ( $type == 'MANY' ) {
-								$add = mysqli_fetch_all( $result, MYSQLI_ASSOC );
-							} elseif ( $type == 'ONE' ) {
-								$add = mysqli_fetch_assoc( $result );
+							switch ( $type ) {
+								case 'ONE':
+									$add = mysqli_fetch_assoc( $result );
+									break;
+								case 'MANY':
+								default:
+									$add = mysqli_fetch_all( $result, MYSQLI_ASSOC );
+									break;
 							}
+
 							if ( $w['pluck'] ) {
 								$data[ $i ][ $w['alias'] ] = $this->lists( $add, $w['pluck'] );
 							} else {
@@ -961,7 +949,7 @@ class DBConn {
 						}
 					}
 				}
-			} catch ( Exception $ex ) {
+			} catch ( \Exception $ex ) {
 				$this->error( $ex->getMessage() );
 			}
 		}
@@ -974,9 +962,7 @@ class DBConn {
 	 *
 	 * @return false|string
 	 */
-	private function getNormalizedTarget(
-		int $index
-	) {
+	private function getNormalizedTarget( int $index ) {
 		$target = $this->tables[ $index ]['name'];
 		if ( substr( $target, - 1 ) == 's' ) {
 			return substr( $target, 0, strlen( $target ) - 1 );
@@ -990,9 +976,7 @@ class DBConn {
 	 *
 	 * @throws \Exception
 	 */
-	private function error(
-		string $msg = ''
-	) {
+	private function error( string $msg = '' ) {
 		if ( $this->_debug ) {
 			$error = [
 				mysqli_error( $this->cn ),
@@ -1036,11 +1020,10 @@ class DBConn {
 		$tableJoin   = $this->tables[ $index ];
 		$tableTarget = $this->tables[ $tableJoin['target'] ];
 		if ( empty( $foreignField ) ) {
-			$foreignField = $this->getNormalizedTarget( $tableJoin['target'] ) . '_id';
+			$foreignField = $this->getNormalizedTarget( $tableJoin['target'] ) . '_' . $this->primaryKey;
 		}
 
-		$relaion                            = sprintf( '%s.%s %s %s.%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreignField );
-		$this->tables[ $index ]['relation'] = $relaion;
+		$this->tables[ $index ]['relation'] = sprintf( ' % s .%s % s % s .%s', $tableJoin['name'], $tableField, $operator, $tableTarget['name'], $foreignField );
 
 		return $this;
 	}
@@ -1083,6 +1066,33 @@ class DBConn {
 		}
 
 		return sprintf( "%s.%s %s %s", $table, trim( $field ), $operator, $value );
+	}
+
+	/**
+	 * @param string $input
+	 *
+	 * @return string
+	 */
+	private function getInputValue( string $input ) {
+		$this->values[] = $input;
+
+		return ' % ' . count( $this->values ) . '$s';
+	}
+
+	/**
+	 * @param $table
+	 *
+	 * @return array
+	 * @throws \Exception
+	 */
+	private function getActiveFlags( string $table ): array {
+		$flags     = [];
+		$metaTable = $this->getTable( $table['name'] );
+		foreach ( array_intersect_key( $this->activeFlags, $metaTable->fields ) as $flag ) {
+			$flags[] = $flag . ' ' . $this->activeFlags[ $flag ]['condition'];
+		}
+
+		return $flags;
 	}
 
 }
