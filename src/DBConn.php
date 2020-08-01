@@ -65,7 +65,7 @@ class DBConn {
 		$this->_charset    = defined( 'CHARSET' ) ? CHARSET : $_ENV['CHARSET'] ?? 'utf8';
 
 		$this->tablestamps = [
-			'updated_by' => $_SESSION[ $this->_session ] ?? null,
+			'updated_by' => $_SESSION[ $this->_session ] ?? 'null',
 			'updated_at' => 'NOW()'
 		];
 
@@ -271,26 +271,23 @@ class DBConn {
 	 *
 	 * @param string $table
 	 * @param array $data
-	 * @param array $where
+	 * @param mixed $update
 	 *
 	 * @return int
 	 * @throws \Exception
 	 */
-	public function save( string $table, array $data, array $where = [] ) {
-		$fields = $this->getTable( $table )->fields;
-		if ( $where = array_filter( $where ) ) {
+	public function save( string $table, array $data, $update = null ) {
+		$metaTable = $this->getTable( $table );
+		if ( $update && ( is_array( $update ) && array_filter( $update ) || is_numeric( $update ) ) ) {
 			$sql = "UPDATE $table SET ";
 		} else {
 			$sql = "INSERT INTO $table SET ";
 		}
 
-		$stack = array_filter( $data, function ( $key ) use ( $fields ) {
-			return isset( $fields[ $key ] );
-		}, ARRAY_FILTER_USE_KEY );
-		$sql   .= join( ',', array_merge( $this->build( $stack ), $this->getStamps() ) );
+		$sql .= join( ',', $this->build( $metaTable->fields, $data, true ) );
 
-		if ( $where ) {
-			$sql .= ' WHERE ' . $this->build( $where, ' AND ' );
+		if ( $update ) {
+			$sql .= $this->createExecuteWhere( $metaTable, $update );
 		}
 
 		return $this->execute( $sql );
@@ -299,32 +296,46 @@ class DBConn {
 	/**
 	 * delete or update with the declared flags, some records based on the where conditions
 	 *
-	 * @param type $table
+	 * @param string $table
 	 * @param type $where
 	 *
-	 * @return type
+	 * @return int
+	 * @throws \Exception
 	 */
 	public function delete( string $table, $where ) {
-		if ( $where ) {
-			$this->getTable( $table );
-			if ( $delete = $this->softDelete() ) {
-				$sql = "update $table set " . implode( ", ", array_merge( $this->build( $delete ), $this->getStamps() ) );
-			} else {
-				$sql = "delete from $table";
-			}
-			$sql .= " where ";
-			if ( is_numeric( $where ) ) {
-				$sql .= $this->key->name . " = " . $where;
-			} elseif ( array_filter( $where ) ) {
-				$sql .= $this->build( $where, " and " );
-			} else {
-				$this->error( "Where format not valid" );
-			}
-
-			return $this->execute( $sql );
-		} else {
-			$this->error( "No Where Statement declared" );
+		if ( ! $where ) {
+			$this->error( "No Where Statement declared for DELETE" );
 		}
+		$metaTable = $this->getTable( $table );
+		if ( $softDelete = $this->softDelete() ) {
+			$sql = "UPDATE $table SET " . join( ', ', $this->build( $metaTable->fields, $softDelete, true ) );
+		} else {
+			$sql = "DELETE FROM $table";
+		}
+
+		$sql .= $this->createExecuteWhere( $metaTable, $where );
+
+		return $this->execute( $sql );
+	}
+
+	/**
+	 * @param $metaTable
+	 * @param $condition
+	 *
+	 * @return string
+	 * @throws \Exception
+	 */
+	private function createExecuteWhere( \stdClass $metaTable, $condition ) {
+		$sql = ' WHERE ';
+		if ( is_numeric( $condition ) ) {
+			$sql .= $metaTable->key->name . ' = ' . $condition;
+		} elseif ( is_array( $condition ) && array_filter( $condition ) ) {
+			$sql .= join( ' AND ', $this->build( $metaTable->fields, $condition, false ) );
+		} else {
+			$this->error( "Where format not valid for DELETE" );
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -686,14 +697,12 @@ class DBConn {
 	 */
 	private function softDelete() {
 		if ( $this->activeFlags ) {
-			$delete = array();
-			foreach ( $this->activeFlags as $flag ) {
-				if ( in_array( $flag, $this->fields ) ) {
-					$delete[ $flag ] = 0;
-				}
+			$softDelete = [];
+			foreach ( $this->activeFlags as $flag => $value ) {
+				$softDelete[] = sprintf( '%s = %s', $flag, $value['fill'] );
 			}
 
-			return $delete;
+			return $softDelete;
 		}
 
 		return false;
@@ -703,38 +712,36 @@ class DBConn {
 	 * @return array
 	 */
 	private function getStamps() {
+		$stamps = [];
 		if ( $this->tablestamps ) {
-			$stamps = array();
 			foreach ( $this->tablestamps as $k => $v ) {
 				if ( in_array( $k, $this->fields ) && $v ) {
 					$stamps[] = "$k = $v";
 				}
 			}
-
-			return $stamps;
 		}
+
+		return $stamps;
 	}
 
 	/**
-	 * @param $stack
-	 * @param string $join
+	 * @param array $fields
+	 * @param array $data
+	 * @param bool $withStapms
 	 *
-	 * @return array|string
+	 * @return array
 	 */
-	private function build( array $stack, string $join = '' ) {
+	private function build( array $fields, array $data, bool $withStapms ) {
 		$builder = [];
+		$stack   = array_intersect_key( $fields, $data );
 		foreach ( $stack as $key => $value ) {
-			if ( ! isset( $this->tablestamps[ $key ] ) ) {
-				$builder[ $key ] = $value;
-			}
+			$builder[] = sprintf( '%s = %s', $key, isset( $value ) ? "'$value'" : 'null' );
 		}
 
-		$builder = array_map( function ( $k, $v ) {
-			return sprintf( '%s = %s', $k, $v ? "'$v'" : 'null' );
-		}, array_keys( $builder ), $builder );
-
-		if ( $join ) {
-			return join( $join, $builder );
+		if ( $withStapms && $this->tablestamps ) {
+			foreach ( $this->tablestamps as $stamp => $default ) {
+				$builder[] = sprintf( '%s = %s', $stamp, $default );
+			}
 		}
 
 		return $builder;
