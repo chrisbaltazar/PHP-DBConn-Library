@@ -277,8 +277,9 @@ class DBConn {
 	 * @throws \Exception
 	 */
 	public function save( string $table, array $data, $update = null ) {
-		$metaTable = $this->getTable( $table );
-		if ( $update && ( is_array( $update ) && array_filter( $update ) || is_numeric( $update ) ) ) {
+		$this->values = [];
+		$metaTable    = $this->getTable( $table );
+		if ( $update ) {
 			$sql = "UPDATE $table SET ";
 		} else {
 			$sql = "INSERT INTO $table SET ";
@@ -287,7 +288,7 @@ class DBConn {
 		$sql .= join( ',', $this->build( $metaTable->fields, $data, true ) );
 
 		if ( $update ) {
-			$sql .= $this->createExecuteWhere( $metaTable, $update );
+			$this->createExecuteWhere( $sql, $metaTable, $update );
 		}
 
 		return $this->execute( $sql );
@@ -306,36 +307,38 @@ class DBConn {
 		if ( ! $where ) {
 			$this->error( "No Where Statement declared for DELETE" );
 		}
-		$metaTable = $this->getTable( $table );
+		$this->values = [];
+		$metaTable    = $this->getTable( $table );
 		if ( $softDelete = $this->softDelete() ) {
 			$sql = "UPDATE $table SET " . join( ', ', $this->build( $metaTable->fields, $softDelete, true ) );
 		} else {
 			$sql = "DELETE FROM $table";
 		}
 
-		$sql .= $this->createExecuteWhere( $metaTable, $where );
+		$this->createExecuteWhere( $sql, $metaTable, $where );
 
 		return $this->execute( $sql );
 	}
 
 	/**
+	 * @param string $sql
 	 * @param $metaTable
-	 * @param $condition
+	 * @param $param
 	 *
 	 * @return string
 	 * @throws \Exception
 	 */
-	private function createExecuteWhere( \stdClass $metaTable, $condition ) {
-		$sql = ' WHERE ';
-		if ( is_numeric( $condition ) ) {
-			$sql .= $metaTable->key->name . ' = ' . $condition;
-		} elseif ( is_array( $condition ) && array_filter( $condition ) ) {
-			$sql .= join( ' AND ', $this->build( $metaTable->fields, $condition, false ) );
+	private function createExecuteWhere( string &$sql, $metaTable, $param ) {
+		$where = ' WHERE ';
+		if ( is_numeric( $param ) ) {
+			$where .= $metaTable->key->name . ' = ' . $param;
+		} elseif ( is_array( $param ) && array_filter( $param ) ) {
+			$where .= join( ' AND ', $this->build( $metaTable->fields, $param, false ) );
 		} else {
 			$this->error( "Where format not valid for DELETE" );
 		}
 
-		return $sql;
+		$sql .= $where;
 	}
 
 	/**
@@ -588,7 +591,7 @@ class DBConn {
 	 */
 	private function query( string $sql ) {
 		$this->connect();
-		// Sanitize values before querying once we have the connection
+		// Sanitize values before querying and once we have the connection
 		$sql = vsprintf( $sql, array_map( function ( $item ) {
 			if ( strpos( $item, '\'' ) === 0 ) {
 				return "'" . mysqli_real_escape_string( $this->cn, trim( $item, '\'' ) ) . "'";
@@ -733,13 +736,27 @@ class DBConn {
 	 */
 	private function build( array $fields, array $data, bool $withStapms ) {
 		$builder = [];
-		$stack   = array_intersect_key( $fields, $data );
+		$stack   = array_intersect_key( $data, $fields );
 		foreach ( $stack as $key => $value ) {
-			$builder[] = sprintf( '%s = %s', $key, isset( $value ) ? "'$value'" : 'null' );
+//			$value = $data[ $key ] ?? null;
+			if ( isset( $value ) ) {
+				$matches = [];
+				// Try to find out if the value is a DB function to avoid using quotes
+				preg_match( '<^(\w+[(](.*)[)])$>', $value, $matches );
+				if ( ! $matches ) {
+					// Is not a function but a plain value
+					$value = $this->getInputValue( "'$value'" );
+				}
+			} else {
+				$value = 'null';
+			}
+
+			$builder[] = sprintf( '%s = %s', $key, $value );
 		}
 
 		if ( $withStapms && $this->tablestamps ) {
-			foreach ( $this->tablestamps as $stamp => $default ) {
+			$stack = array_intersect_key( $this->tablestamps, $fields );
+			foreach ( $stack as $stamp => $default ) {
 				$builder[] = sprintf( '%s = %s', $stamp, $default );
 			}
 		}
@@ -1078,10 +1095,10 @@ class DBConn {
 	 * @throws \Exception
 	 */
 	private function getActiveFlags( string $table ): array {
-		$flags     = [];
-		$metaTable = $this->getTable( $table['name'] );
-		foreach ( array_intersect_key( $this->activeFlags, $metaTable->fields ) as $flag ) {
-			$flags[] = $flag . ' ' . $this->activeFlags[ $flag ]['condition'];
+		$flags  = [];
+		$fields = $this->getTable( $table['name'] )->fields;
+		foreach ( array_intersect_key( $this->activeFlags, $fields ) as $flag => $config ) {
+			$flags[] = $flag . ' ' . $config['condition'];
 		}
 
 		return $flags;
