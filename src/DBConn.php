@@ -824,7 +824,7 @@ class DBConn {
 				$this->error( 'Order statement doesn\'t match with tables count' );
 			}
 			$stack = [];
-			foreach ( $this->order as $i => $order ) {
+			foreach ( ksort( $this->order ) as $i => $order ) {
 				foreach ( explode( ',', $order ) as $o ) {
 					$stack[] = $this->tables[ $i ]['name'] . '.' . trim( $o );
 				}
