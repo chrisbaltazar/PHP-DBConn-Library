@@ -820,9 +820,8 @@ class DBConn {
 	 */
 	private function getOrder() {
 		if ( $this->order ) {
-			if ( count( $this->order ) <= count( $this->tables ) ) {
+			if ( count( $this->order ) > count( $this->tables ) ) {
 				$this->error( 'Order statement doesn\'t match with tables count' );
-
 			}
 			$stack = [];
 			foreach ( $this->order as $i => $order ) {
@@ -986,15 +985,15 @@ class DBConn {
 	 * @throws \Exception
 	 */
 	protected function error( string $msg = '' ) {
+		$error = [ $msg ];
 		if ( $this->_debug ) {
-			$error = [
+			$error = array_merge( $error, [
 				mysqli_error( $this->cn ),
-				$msg,
 				$this->sql
-			];
+			] );
 		}
 
-		throw new \Exception( join( ' | ', array_filter( $error ?? [] ) ) );
+		throw new \Exception( join( ' | ', array_filter( $error ) ) );
 	}
 
 	/**

@@ -1,48 +1,54 @@
 # DBConn PHP 
 
-This is a useful class to handle dynamic connections and operations on different database engines, using Object notation 
+This is a useful library to handle common and fast operations on MysQL/MariaDB database engines, using Object notation an taking inspiration from Laravel Eloquent. 
 
 ## Installation
 
-Just include this class in your own scripts and create an instance of it 
+Just install the library via composer running 
+
+```shell script
+composer require chrisbaltazar/dbconn 
+``` 
 
 ### Requirements
 
-* PHP >= 5.4
+* PHP >= 7.0 
 
 ## Initial config. 
 
 
-To start to work with this, just declare in the "constructor" of the class, all the connections your want to use on it, as the following: 
+All the necessary configuration is done inside the class constructor, so you all you need to do is have ready the needed CONSTANTS/ENV values before instantiating your DB object. 
 
-```php 
-$this->connections['DEFAULT'] = array(
-     'HOST' => 'yourhostname', 
-     'USR' => 'username', 
-     'PWD' => 'dbpassword', 
-     'DB' => 'dbname');
-```
-and so on... using an IDENTIFIER on each case into the array. 
+### The list of config fields are:
+
+* DB_HOST (string)
+* DB_USER (string)
+* DB_PWD (string)
+* DB_NAME (string)
+* DB_DEBUG (bool) 
+* SESSION_ID (string) _name of the variable into the application session to get the current user_
+* TIME_ZONE (string) _GMT+1_ 
+* SUMMER_TIME (bool) _autocalculate the time changing_
+* CHARSET (string) _utf8_  
+ 
 
 ### Additional config. 
+ 
+By default the library also tries to handle the popular _tablestamps_ 
+* updated_by 
+* updated_at 
+* deleted_at 
 
-You can also declare some attributes for the class, in order to handle "Logic deletes" on tables, instead of permanent. Regarding to the variable called "flags", which use simple values like 0 and 1 as status. 
+and fill in their values on every query, this is also configured into the `constructor` so every change you may need can be done extending the class and overriding this part. 
 
-Other useful attribute it is the class variable "tablestamps" which is an array of vars to manage the "updater" date and author, using the name of the SESSION for the current user. 
-
-Of course you will find the proper "setters" for all this inside as well. 
-
+> The most important thing to remember is that the `init` method MUST be called after doing the class configuration if you are extending the library 
 
 ## Usage
 
 ```php 
-  require_once('DBConn.php'); 
-  
-  $db = new DBConn(); // For default 
-```
-or 
-```php 
-  $db = new DBConn('CONNECTION_NAME_IN ARRAY'); 
+use chrisbaltazar/dbconn; 
+
+$db = new DBConn(); 
 ```
 
 ## Examples 
@@ -54,50 +60,71 @@ Maybe a JSON would be more useful for more common cases
 ```php 
 $data = $db->from('tablename')->getJSON(); 
 ```
-Selecting fields you need in the consult, (separated by comma)
+Selecting only the fields you need in the consult, (separated by comma)
 ```php 
 $data = $db->select('field1, field2, field3')
            ->from('tablename')
            ->getJSON(); 
 ```
-Let's make a JOIN with more tables
-```php 
+Every time you need to debug your consult you can use the `getSQL` method at the end in order to get the query body to be executed before finish. 
+
+```php
 $data = $db->select('field1, field2, field3')
            ->from('tablename')
-           ->join(['othertablename', 0, 'other_id = main_id'])
-           ->join(['anothertablename', 1, 'another_id = other_id', 'LEFT'])
+           ->getSQL(); 
+```
+
+Let's make a JOIN with more tables
+```php 
+$data = $db->select('field1, field2, field3', 'field4', 'field5')
+           ->from('maintable')
+           ->join('table2')
+           ->join('table3', 1, 'LEFT')
            ->getJSON(); 
+
 // In this case you can declare on the "join" statement the following: 
 // 1. Table name for join to 
 // 2. Index of target table in the tables array to join with, 
-// for this example we have 3 tables in total, counting the main source(from)  
-// 3. The condition which these tables have to join with 
-// 4. The type of join, INNER by default
+// for this example we have 3 tables in total, counting the main source(from table)
+// In this case the index 1 will point to table2 instead of the maintable  which is index o    
+// 3. The type of join, INNER by default
 ```
-Now we can separate the fields to extract from each table
+>by default the joins are done using the common table's id such as `id` and `foreign_id` 
+
+If you need to specify the ON clause for every JOIN you can use 
+```php
+$data = $db->select('field1, field2, field3', 'field4')
+           ->from('maintable')
+           ->join('table2')->on('local_id', 'foreign_id')
+           ->getJSON();
+```
+
+Now we are separating the fields to extract from each table
 ```php 
-$data = $db->select(['field1, field2', 'field3', 'field4'])
-           ->from('tablename')
-           ->join(['othertablename', 0, 'other_id = main_id'])
-           ->join(['anothertablename', 1, 'another_id = other_id', 'LEFT'])
+$data = $db->select('field1, field2, field3', 'field4', 'field5')
+           ->from('maintable')
+           ->join('table2')
+           ->join('table3', 1, 'LEFT')
            ->getJSON(); 
-// This way, we are extracting fields 1 and 2 from table 0 or main source
-// and field 3 from the fisrt join, table 1 in this case
-// finally, field 4 from second join, table 2 for us. 
+// This way, we are extracting fields 1, 2 and 3 from table 0 or maintable
+// and field4 from the fisrt join, table1 in this case
+// the same for field5 which will come from table3 in that order
 ```
+
 How about adding an ORDER and GROUP clauses
 ```php
 $data = $db->select('field1, field2, field3')
            ->from('tablename')
-           ->order('somefield')
+           ->order('somefield1, somefield2')
            ->group('someotherfield')
-           ->getJSON(); 
+           ->getJSON();
+
 // Also you can specify the scope of the ORDER or GROUP 
 // using array notation and index declaration like: 
 
-->order([1 => 'table1field', 0 => 'table0field'])
-
+->order([1 => 'table1_field', 0 => 'table0_field']);
 ```
+
 What about "WHERE" clause? Let's see...
 ```php 
 $data = $db->select(['field1, field2', 'field3', 'field4'])
