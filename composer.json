@@ -1,0 +1,21 @@
+{
+  "name": "chrisbaltazar/dbconn",
+  "description": "Easy library to perform common and fast DB queries for non-framework projects",
+  "type": "library",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Chris Baltazar",
+      "email": "ing.chris@hotmail.com"
+    }
+  ],
+  "require": {
+    "php": ">=7.0",
+    "ext-mysqli": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "DBConn\\": "src"
+    }
+  }
+}
