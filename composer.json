@@ -2,6 +2,7 @@
   "name": "chrisbaltazar/dbconn",
   "description": "Easy library to perform common and fast DB queries for non-framework projects",
   "type": "library",
+  "version":"2.0.1",
   "license": "MIT",
   "authors": [
     {
